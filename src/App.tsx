@@ -7,7 +7,7 @@ import { ExpenseFormModal } from './components/ExpenseFormModal';
 import { F2PdfPreviewModal } from './components/F2PdfPreviewModal';
 import { OutlookModal } from './components/OutlookModal';
 import { HistoryDrawer } from './components/HistoryDrawer';
-import { Plus, Send, FileText, Sparkles, Building2, UserCheck, Calendar, Edit3 } from 'lucide-react';
+import { Plus, Send, FileText, Sparkles, Building2, UserCheck, Calendar, Edit3, RotateCcw } from 'lucide-react';
 
 const INITIAL_HEADER_INFO: CompanyHeaderInfo = {
   companyName: 'HADAF AL AIMS TRADING CO.',
@@ -16,49 +16,13 @@ const INITIAL_HEADER_INFO: CompanyHeaderInfo = {
   badgeNo: 'xx',
   placeSite: 'KSA',
   currency: 'SAR',
-  expenseTypeSummary: 'Sundry expenses April, May, June 2026',
+  expenseTypeSummary: 'Sundry Expenses August 2026',
   approverName: 'Leela Venkat',
-  dateSubmitted: '2026-06-27',
+  dateSubmitted: new Date().toISOString().split('T')[0],
   advanceFromCompany: 0,
   previousBalance: 0,
   cashInHand: 0
 };
-
-// Prefilled active June 2026 expense draft matching Shoeb_SUNDRY EXPENSES_ 27- June 26.xlsx
-const INITIAL_EXPENSES: ExpenseItem[] = [
-  {
-    id: 'exp-1',
-    date: '2026-06-27',
-    description: 'Site Fuel -FGP (6 Visit)',
-    jobNo: '12918',
-    category: 'Electricity water fuel',
-    amount: 430.50
-  },
-  {
-    id: 'exp-2',
-    date: '2026-06-27',
-    description: 'Site Food-FGP (6 Visit)-5 Person',
-    jobNo: '12918',
-    category: 'Sundry Consumable',
-    amount: 508.00
-  },
-  {
-    id: 'exp-3',
-    date: '2026-06-27',
-    description: 'AI Subscription Bills',
-    jobNo: '-',
-    category: 'Sundry Consumable',
-    amount: 257.40
-  },
-  {
-    id: 'exp-4',
-    date: '2026-06-27',
-    description: 'Material (Special cable)',
-    jobNo: '12918',
-    category: 'Site Tools equpt',
-    amount: 50.00
-  }
-];
 
 export default function App() {
   const [headerInfo, setHeaderInfo] = useState<CompanyHeaderInfo>(() => {
@@ -68,7 +32,7 @@ export default function App() {
 
   const [expenses, setExpenses] = useState<ExpenseItem[]>(() => {
     const saved = localStorage.getItem('aims_expenses');
-    return saved ? JSON.parse(saved) : INITIAL_EXPENSES;
+    return saved ? JSON.parse(saved) : [];
   });
 
   const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -98,6 +62,18 @@ export default function App() {
   const [isHistoryDrawerOpen, setIsHistoryDrawerOpen] = useState(false);
 
   const grandTotal = expenses.reduce((sum, item) => sum + item.amount, 0);
+
+  const handleStartNewReport = () => {
+    if (window.confirm('Start a new blank expense report? This will clear your current draft list so you can enter fresh site expenses.')) {
+      setHeaderInfo({
+        ...INITIAL_HEADER_INFO,
+        dateSubmitted: new Date().toISOString().split('T')[0],
+        expenseTypeSummary: 'Sundry Expenses August 2026'
+      });
+      setExpenses([]);
+      localStorage.removeItem('aims_expenses');
+    }
+  };
 
   const handleSaveExpense = (newExpenseData: Omit<ExpenseItem, 'id'>) => {
     if (editingExpense) {
@@ -137,6 +113,7 @@ export default function App() {
         onOpenOutlookModal={() => setIsOutlookModalOpen(true)}
         onOpenHistoryDrawer={() => setIsHistoryDrawerOpen(true)}
         onOpenPdfPreview={() => setIsPdfModalOpen(true)}
+        onStartNewReport={handleStartNewReport}
         totalExpensesCount={expenses.length}
         grandTotal={grandTotal}
         isOutlookConnected={true}
@@ -167,6 +144,14 @@ export default function App() {
                     className="bg-slate-900 border border-slate-700 text-slate-200 text-xs font-semibold px-2 py-0.5 rounded focus:outline-none focus:border-blue-500"
                   />
                 </div>
+
+                <button
+                  onClick={handleStartNewReport}
+                  className="px-2.5 py-1 rounded-md bg-slate-800 hover:bg-slate-700 text-amber-400 text-xs font-semibold border border-slate-700 transition flex items-center gap-1"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  <span>Start Blank Report</span>
+                </button>
               </div>
 
               {/* Editable Report Title / Period */}
