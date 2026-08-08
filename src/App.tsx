@@ -329,6 +329,10 @@ export default function App() {
       <HistoryDrawer
         isOpen={isHistoryDrawerOpen}
         onClose={() => setIsHistoryDrawerOpen(false)}
+        onLoadPastReport={(header, items) => {
+          setHeaderInfo(header);
+          setExpenses(items);
+        }}
       />
 
     </div>
