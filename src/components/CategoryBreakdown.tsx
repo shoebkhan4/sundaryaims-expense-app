@@ -1,6 +1,6 @@
 import React from 'react';
 import { ExpenseItem, CompanyHeaderInfo } from '../types/expense';
-import { Fuel, Wrench, Truck, Tool, ShoppingBag, ShieldCheck } from 'lucide-react';
+import { Fuel, Wrench, Truck, Sliders, ShoppingBag, ShieldCheck } from 'lucide-react';
 
 interface CategoryBreakdownProps {
   expenses: ExpenseItem[];
@@ -72,7 +72,7 @@ export const CategoryBreakdown: React.FC<CategoryBreakdownProps> = ({
         {/* Tools */}
         <div className="bg-slate-850 border border-slate-800 rounded-xl p-3">
           <div className="flex items-center space-x-2 text-slate-400 mb-1">
-            <Tool className="w-4 h-4 text-emerald-400" />
+            <Sliders className="w-4 h-4 text-emerald-400" />
             <span className="text-[11px] font-medium truncate">Site Tools</span>
           </div>
           <span className="text-sm font-bold text-slate-100 block">SAR {categoryTotals.tools.toFixed(2)}</span>
