@@ -7,7 +7,7 @@ import { ExpenseFormModal } from './components/ExpenseFormModal';
 import { F2PdfPreviewModal } from './components/F2PdfPreviewModal';
 import { OutlookModal } from './components/OutlookModal';
 import { HistoryDrawer } from './components/HistoryDrawer';
-import { Plus, Send, FileText, Sparkles, Building2, UserCheck, Calendar, Edit3, RotateCcw, Layers } from 'lucide-react';
+import { Send, FileText, Sparkles, Building2, UserCheck, Calendar, Edit3, RotateCcw, Layers } from 'lucide-react';
 import { AIMS_LOGO_BASE64 } from './assets/images';
 
 const INITIAL_HEADER_INFO: CompanyHeaderInfo = {
@@ -138,7 +138,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
       
-      {/* Sticky Header Navbar with AIMS Logo & Brand Bar */}
+      {/* Sticky Header Navbar with AIMS Logo */}
       <Navbar
         onOpenAddModal={() => {
           setEditingExpense(null);
@@ -263,7 +263,7 @@ export default function App() {
                       type="text"
                       value={headerInfo.approverName}
                       onChange={(e) => handleUpdateHeaderInfo({ approverName: e.target.value })}
-                      className="bg-transparent font-bold text-slate-100 w-full focus:outline-none border-b border-transparent hover:border-slate-600 focus:border-cyan-500"
+                      className="bg-transparent font-semibold text-slate-100 w-full focus:outline-none border-b border-transparent hover:border-slate-600 focus:border-cyan-500"
                     />
                   </div>
                 </div>
@@ -285,33 +285,21 @@ export default function App() {
               </div>
             </div>
 
-            {/* Quick Action Box */}
+            {/* Quick Action Box (Removed duplicate + Add Row button) */}
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 bg-slate-950/80 p-4 rounded-xl border border-slate-800 shrink-0 shadow-lg">
               <div className="text-left sm:text-right pr-4 border-r-0 sm:border-r border-slate-800">
                 <span className="text-[11px] text-slate-400 font-bold uppercase tracking-wider block">Grand Total</span>
                 <span className="text-2xl font-black text-emerald-400">SAR {grandTotal.toFixed(2)}</span>
               </div>
 
-              <div className="flex items-center space-x-2">
-                <button
-                  onClick={() => setIsOutlookModalOpen(true)}
-                  disabled={expenses.length === 0}
-                  className="flex-1 sm:flex-none px-4 py-2.5 rounded-xl bg-gradient-to-r from-[#00A3E0] to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-black text-xs shadow-lg shadow-cyan-500/20 transition flex items-center justify-center gap-2 disabled:opacity-50"
-                >
-                  <Send className="w-4 h-4" />
-                  <span>Send Outlook</span>
-                </button>
-                <button
-                  onClick={() => {
-                    setEditingExpense(null);
-                    setIsAddModalOpen(true);
-                  }}
-                  className="flex-1 sm:flex-none px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs shadow-lg shadow-emerald-600/30 transition flex items-center justify-center gap-2"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>+ Add Row</span>
-                </button>
-              </div>
+              <button
+                onClick={() => setIsOutlookModalOpen(true)}
+                disabled={expenses.length === 0}
+                className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#00A3E0] to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-black text-xs shadow-lg shadow-cyan-500/20 transition flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                <Send className="w-4 h-4" />
+                <span>Send Outlook</span>
+              </button>
             </div>
 
           </div>

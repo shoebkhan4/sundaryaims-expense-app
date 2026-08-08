@@ -15,7 +15,10 @@ export interface ExpenseItem {
   description: string;
   jobNo: string;
   category: ExpenseCategory;
-  amount: number;
+  amount: number; // Amount in SAR
+  originalCurrency?: 'SAR' | 'USD';
+  originalAmount?: number;
+  conversionRate?: number; // e.g. 3.75
   receiptImage?: string; // base64 or object URL
   receiptFileName?: string;
   accountCode?: string;
@@ -36,7 +39,7 @@ export interface CompanyHeaderInfo {
   advanceFromCompany: number;
   previousBalance: number;
   cashInHand: number;
-  consolidateCategories?: boolean; // toggle for point-wise category row grouping on F2 PDF
+  consolidateCategories?: boolean;
 }
 
 export interface OutlookSubmission {
