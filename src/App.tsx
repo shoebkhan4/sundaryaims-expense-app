@@ -8,6 +8,7 @@ import { F2PdfPreviewModal } from './components/F2PdfPreviewModal';
 import { OutlookModal } from './components/OutlookModal';
 import { HistoryDrawer } from './components/HistoryDrawer';
 import { Plus, Send, FileText, Sparkles, Building2, UserCheck, Calendar, Edit3, RotateCcw, Layers } from 'lucide-react';
+import { AIMS_LOGO_BASE64 } from './assets/images';
 
 const INITIAL_HEADER_INFO: CompanyHeaderInfo = {
   companyName: 'HADAF AL AIMS TRADING CO.',
@@ -25,9 +26,6 @@ const INITIAL_HEADER_INFO: CompanyHeaderInfo = {
   consolidateCategories: true
 };
 
-/**
- * Automatically inspects item dates and generates dynamic multi-month or single-month Expense Type Title (Requirement 3)
- */
 function detectExpenseTypeSummary(items: ExpenseItem[]): string {
   if (items.length === 0) return 'Sundry expenses August 2026';
 
@@ -67,7 +65,6 @@ export default function App() {
 
   const [isEditingTitle, setIsEditingTitle] = useState(false);
 
-  // Auto-detect multi-month title whenever expenses change (Requirement 3)
   useEffect(() => {
     if (expenses.length > 0) {
       const autoTitle = detectExpenseTypeSummary(expenses);
@@ -75,7 +72,6 @@ export default function App() {
     }
   }, [expenses]);
 
-  // Save to localStorage safely
   useEffect(() => {
     try {
       localStorage.setItem('aims_header_info', JSON.stringify(headerInfo));
@@ -142,7 +138,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
       
-      {/* Sticky Header Navbar (AIMS Cyan Branding) */}
+      {/* Sticky Header Navbar with AIMS Logo & Brand Bar */}
       <Navbar
         onOpenAddModal={() => {
           setEditingExpense(null);
@@ -160,20 +156,23 @@ export default function App() {
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
         
-        {/* TOP SUMMARY BANNER CARD */}
-        <div className="bg-gradient-to-r from-slate-900 via-slate-850 to-cyan-950/40 border border-slate-800 rounded-2xl p-6 shadow-xl relative overflow-hidden">
+        {/* AIMS BRANDED TOP SUMMARY BANNER CARD */}
+        <div className="bg-slate-900 border border-cyan-500/30 rounded-2xl p-6 shadow-2xl relative overflow-hidden">
           
-          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+          {/* Top Yellow Ribbon Matching F2 Form Header */}
+          <div className="absolute top-0 left-0 right-0 h-1.5 bg-[#FFC20E]" />
+
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6 pt-1">
             
             {/* Header Info Details */}
             <div className="space-y-3 flex-1">
               <div className="flex flex-wrap items-center gap-3">
-                <span className="px-2.5 py-1 rounded-md bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 text-xs font-bold uppercase tracking-wider">
+                <span className="px-3 py-1 rounded-lg bg-[#00A3E0]/15 border border-[#00A3E0]/30 text-[#00A3E0] text-xs font-black uppercase tracking-wider">
                   Company F2 Form Draft
                 </span>
 
-                <div className="flex items-center text-xs text-slate-400 bg-slate-800/80 px-2.5 py-1 rounded-md border border-slate-700">
-                  <Calendar className="w-3.5 h-3.5 text-slate-400 mr-1.5" />
+                <div className="flex items-center text-xs text-slate-300 bg-slate-800/90 px-3 py-1 rounded-lg border border-slate-700">
+                  <Calendar className="w-3.5 h-3.5 text-cyan-400 mr-1.5" />
                   <span className="text-slate-400 mr-1 font-medium">Expense Date:</span>
                   <input
                     type="date"
@@ -183,17 +182,17 @@ export default function App() {
                   />
                 </div>
 
-                {/* Category Consolidation Mode Toggle (Requirement 4) */}
+                {/* Category Consolidation Mode Toggle */}
                 <button
                   onClick={() => handleUpdateHeaderInfo({ consolidateCategories: !headerInfo.consolidateCategories })}
-                  className={`px-2.5 py-1 rounded-md text-xs font-semibold border transition flex items-center gap-1.5 ${
+                  className={`px-3 py-1 rounded-lg text-xs font-bold border transition flex items-center gap-1.5 ${
                     headerInfo.consolidateCategories
-                      ? 'bg-cyan-500/15 border-cyan-500/30 text-cyan-300'
+                      ? 'bg-cyan-500/20 border-cyan-500/40 text-cyan-300 shadow-sm'
                       : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-slate-200'
                   }`}
                   title="Toggle point-wise category grouping on F2 Form PDF"
                 >
-                  <Layers className="w-3.5 h-3.5" />
+                  <Layers className="w-3.5 h-3.5 text-cyan-400" />
                   <span>PDF Mode: {headerInfo.consolidateCategories ? 'Category Grouped' : 'Individual Rows'}</span>
                 </button>
               </div>
@@ -208,18 +207,18 @@ export default function App() {
                     onChange={(e) => handleUpdateHeaderInfo({ expenseTypeSummary: e.target.value })}
                     onBlur={() => setIsEditingTitle(false)}
                     onKeyDown={(e) => e.key === 'Enter' && setIsEditingTitle(false)}
-                    className="w-full text-xl sm:text-2xl font-extrabold text-white bg-slate-900 border border-cyan-500 rounded-lg px-3 py-1 focus:outline-none"
+                    className="w-full text-xl sm:text-2xl font-black text-white bg-slate-950 border border-[#00A3E0] rounded-xl px-3 py-1 focus:outline-none shadow-inner"
                   />
                 ) : (
                   <div
                     onClick={() => setIsEditingTitle(true)}
-                    className="flex items-center space-x-2 cursor-pointer hover:bg-slate-800/50 p-1.5 rounded-lg -ml-1.5 transition"
+                    className="flex items-center space-x-2 cursor-pointer hover:bg-slate-850 p-2 rounded-xl -ml-2 transition border border-transparent hover:border-slate-800"
                     title="Auto-detected from bill dates. Click to edit manually."
                   >
-                    <h2 className="text-xl sm:text-2xl font-extrabold text-slate-100 tracking-tight">
+                    <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight">
                       {headerInfo.expenseTypeSummary}
                     </h2>
-                    <Edit3 className="w-4 h-4 text-cyan-400 opacity-60 group-hover:opacity-100 transition" />
+                    <Edit3 className="w-4 h-4 text-[#00A3E0] opacity-70 group-hover:opacity-100 transition" />
                   </div>
                 )}
               </div>
@@ -228,57 +227,57 @@ export default function App() {
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs text-slate-300 pt-1">
                 
                 {/* Employee Name */}
-                <div className="flex items-center space-x-2 bg-slate-900/60 p-2 rounded-lg border border-slate-800">
-                  <Building2 className="w-4 h-4 text-cyan-400 shrink-0" />
+                <div className="flex items-center space-x-2 bg-slate-950/70 p-2.5 rounded-xl border border-slate-800">
+                  <Building2 className="w-4 h-4 text-[#00A3E0] shrink-0" />
                   <div className="min-w-0 flex-1">
-                    <span className="text-slate-500 block text-[10px] uppercase font-semibold">Employee</span>
+                    <span className="text-slate-500 block text-[10px] uppercase font-bold">Employee</span>
                     <input
                       type="text"
                       value={headerInfo.employeeName}
                       onChange={(e) => handleUpdateHeaderInfo({ employeeName: e.target.value })}
-                      className="bg-transparent font-semibold text-slate-200 w-full focus:outline-none border-b border-transparent hover:border-slate-600 focus:border-cyan-500"
+                      className="bg-transparent font-bold text-slate-100 w-full focus:outline-none border-b border-transparent hover:border-slate-600 focus:border-cyan-500"
                     />
                   </div>
                 </div>
 
                 {/* Site / Location */}
-                <div className="flex items-center space-x-2 bg-slate-900/60 p-2 rounded-lg border border-slate-800">
-                  <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
+                <div className="flex items-center space-x-2 bg-slate-950/70 p-2.5 rounded-xl border border-slate-800">
+                  <Sparkles className="w-4 h-4 text-[#FFC20E] shrink-0" />
                   <div className="min-w-0 flex-1">
-                    <span className="text-slate-500 block text-[10px] uppercase font-semibold">Place / Site</span>
+                    <span className="text-slate-500 block text-[10px] uppercase font-bold">Place / Site</span>
                     <input
                       type="text"
                       value={headerInfo.placeSite}
                       onChange={(e) => handleUpdateHeaderInfo({ placeSite: e.target.value })}
-                      className="bg-transparent font-semibold text-slate-200 w-full focus:outline-none border-b border-transparent hover:border-slate-600 focus:border-cyan-500"
+                      className="bg-transparent font-bold text-slate-100 w-full focus:outline-none border-b border-transparent hover:border-slate-600 focus:border-cyan-500"
                     />
                   </div>
                 </div>
 
                 {/* Approver Name */}
-                <div className="flex items-center space-x-2 bg-slate-900/60 p-2 rounded-lg border border-slate-800">
+                <div className="flex items-center space-x-2 bg-slate-950/70 p-2.5 rounded-xl border border-slate-800">
                   <UserCheck className="w-4 h-4 text-emerald-400 shrink-0" />
                   <div className="min-w-0 flex-1">
-                    <span className="text-slate-500 block text-[10px] uppercase font-semibold">Approver</span>
+                    <span className="text-slate-500 block text-[10px] uppercase font-bold">Approver</span>
                     <input
                       type="text"
                       value={headerInfo.approverName}
                       onChange={(e) => handleUpdateHeaderInfo({ approverName: e.target.value })}
-                      className="bg-transparent font-semibold text-slate-200 w-full focus:outline-none border-b border-transparent hover:border-slate-600 focus:border-cyan-500"
+                      className="bg-transparent font-bold text-slate-100 w-full focus:outline-none border-b border-transparent hover:border-slate-600 focus:border-cyan-500"
                     />
                   </div>
                 </div>
 
                 {/* Currency */}
-                <div className="flex items-center space-x-2 bg-slate-900/60 p-2 rounded-lg border border-slate-800">
+                <div className="flex items-center space-x-2 bg-slate-950/70 p-2.5 rounded-xl border border-slate-800">
                   <FileText className="w-4 h-4 text-purple-400 shrink-0" />
                   <div className="min-w-0 flex-1">
-                    <span className="text-slate-500 block text-[10px] uppercase font-semibold">Currency</span>
+                    <span className="text-slate-500 block text-[10px] uppercase font-bold">Currency</span>
                     <input
                       type="text"
                       value={headerInfo.currency}
                       onChange={(e) => handleUpdateHeaderInfo({ currency: e.target.value })}
-                      className="bg-transparent font-semibold text-slate-200 w-full focus:outline-none border-b border-transparent hover:border-slate-600 focus:border-cyan-500"
+                      className="bg-transparent font-bold text-slate-100 w-full focus:outline-none border-b border-transparent hover:border-slate-600 focus:border-cyan-500"
                     />
                   </div>
                 </div>
@@ -287,9 +286,9 @@ export default function App() {
             </div>
 
             {/* Quick Action Box */}
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 bg-slate-900/80 p-4 rounded-xl border border-slate-800 shrink-0">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 bg-slate-950/80 p-4 rounded-xl border border-slate-800 shrink-0 shadow-lg">
               <div className="text-left sm:text-right pr-4 border-r-0 sm:border-r border-slate-800">
-                <span className="text-[11px] text-slate-400 font-medium uppercase tracking-wider block">Grand Total</span>
+                <span className="text-[11px] text-slate-400 font-bold uppercase tracking-wider block">Grand Total</span>
                 <span className="text-2xl font-black text-emerald-400">SAR {grandTotal.toFixed(2)}</span>
               </div>
 
@@ -297,7 +296,7 @@ export default function App() {
                 <button
                   onClick={() => setIsOutlookModalOpen(true)}
                   disabled={expenses.length === 0}
-                  className="flex-1 sm:flex-none px-4 py-2.5 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold text-xs shadow-lg transition flex items-center justify-center gap-2 disabled:opacity-50"
+                  className="flex-1 sm:flex-none px-4 py-2.5 rounded-xl bg-gradient-to-r from-[#00A3E0] to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-black text-xs shadow-lg shadow-cyan-500/20 transition flex items-center justify-center gap-2 disabled:opacity-50"
                 >
                   <Send className="w-4 h-4" />
                   <span>Send Outlook</span>
@@ -307,7 +306,7 @@ export default function App() {
                     setEditingExpense(null);
                     setIsAddModalOpen(true);
                   }}
-                  className="flex-1 sm:flex-none px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-lg transition flex items-center justify-center gap-2"
+                  className="flex-1 sm:flex-none px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-black text-xs shadow-lg shadow-emerald-600/30 transition flex items-center justify-center gap-2"
                 >
                   <Plus className="w-4 h-4" />
                   <span>+ Add Row</span>
@@ -329,10 +328,11 @@ export default function App() {
         {/* EXPENSE ITEMS LIST & DASHBOARD */}
         <div className="space-y-3">
           <div className="flex items-center justify-between">
-            <h3 className="text-base font-bold text-slate-200">
+            <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-[#00A3E0]" />
               Expense Items List ({expenses.length})
             </h3>
-            <span className="text-xs text-slate-400">
+            <span className="text-xs text-slate-400 font-medium">
               Click thumbnail to view full resolution bill photo
             </span>
           </div>
@@ -351,8 +351,12 @@ export default function App() {
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-slate-800 bg-slate-900/60 py-4 text-center text-xs text-slate-500">
-        HADAF AL AIMS TRADING CO. &copy; 2026 | Sundry Expense Tracker & Outlook Submissions
+      <footer className="border-t border-slate-800/80 bg-slate-950 py-5 text-center text-xs text-slate-400 flex flex-col items-center justify-center gap-1.5">
+        <div className="flex items-center space-x-2">
+          <img src={AIMS_LOGO_BASE64} alt="AIMS Logo" className="h-4 w-auto bg-white px-1 py-0.5 rounded" />
+          <span className="font-bold text-slate-300">HADAF AL AIMS TRADING CO. &copy; 2026</span>
+        </div>
+        <p className="text-[11px] text-slate-500">Sundry Expense Manager & Outlook Submissions</p>
       </footer>
 
       {/* POPUP MODALS */}
