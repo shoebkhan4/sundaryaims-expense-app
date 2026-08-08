@@ -123,19 +123,19 @@ export async function generateF2SummaryPdf(
   y += 7;
 
   // -------------------------------------------------------------
-  // 3. TABLE HEADERS (Matching exact width & columns)
+  // 3. TABLE HEADERS (Fits perfectly within 277mm page width)
   // -------------------------------------------------------------
   const columns = [
-    { header: 'Date of\nExpense', width: 22 },
-    { header: 'Description', width: 105 },
-    { header: 'Job no.', width: 22 },
-    { header: 'Electricity water\nfuel', width: 26 },
+    { header: 'Date of\nExpense', width: 20 },
+    { header: 'Description', width: 95 },
+    { header: 'Job no.', width: 20 },
+    { header: 'Electricity water\nfuel', width: 24 },
     { header: 'Site Office\nsmall repair', width: 22 },
     { header: 'Spot rental\nequpt', width: 22 },
     { header: 'Site Tools\nequpt', width: 22 },
     { header: 'Sundry\nConsumable', width: 20 },
-    { header: 'Account Code', width: 22 },
-    { header: 'Fin.Entity', width: 18 }
+    { header: 'Account Code', width: 18 },
+    { header: 'Fin.Entity', width: 14 }
   ];
 
   doc.setFont('helvetica', 'bold');
@@ -190,48 +190,48 @@ export async function generateF2SummaryPdf(
 
       let cx = margin;
       // Date
-      doc.text(item.date || '', cx + 2, y + 3.3);
+      doc.text(item.date || '', cx + 1.5, y + 3.3);
       cx += columns[0].width;
 
       // Description
-      const descText = item.description.length > 70 ? item.description.substring(0, 68) + '...' : item.description;
-      doc.text(descText, cx + 2, y + 3.3);
+      const descText = item.description.length > 65 ? item.description.substring(0, 63) + '...' : item.description;
+      doc.text(descText, cx + 1.5, y + 3.3);
       cx += columns[1].width;
 
       // Job no
-      doc.text(item.jobNo || '', cx + 2, y + 3.3);
+      doc.text(item.jobNo || '', cx + 1.5, y + 3.3);
       cx += columns[2].width;
 
       // Fuel
       const isFuel = item.category === 'Electricity water fuel';
-      if (isFuel) doc.text(item.amount.toFixed(2), cx + columns[3].width - 2, y + 3.3, { align: 'right' });
+      if (isFuel) doc.text(item.amount.toFixed(2), cx + columns[3].width - 1.5, y + 3.3, { align: 'right' });
       cx += columns[3].width;
 
       // Repair
       const isRepair = item.category === 'Site Office small repair';
-      if (isRepair) doc.text(item.amount.toFixed(2), cx + columns[4].width - 2, y + 3.3, { align: 'right' });
+      if (isRepair) doc.text(item.amount.toFixed(2), cx + columns[4].width - 1.5, y + 3.3, { align: 'right' });
       cx += columns[4].width;
 
       // Rental
       const isRental = item.category === 'Spot rental equpt';
-      if (isRental) doc.text(item.amount.toFixed(2), cx + columns[5].width - 2, y + 3.3, { align: 'right' });
+      if (isRental) doc.text(item.amount.toFixed(2), cx + columns[5].width - 1.5, y + 3.3, { align: 'right' });
       cx += columns[5].width;
 
       // Tools
       const isTools = item.category === 'Site Tools equpt';
-      if (isTools) doc.text(item.amount.toFixed(2), cx + columns[6].width - 2, y + 3.3, { align: 'right' });
+      if (isTools) doc.text(item.amount.toFixed(2), cx + columns[6].width - 1.5, y + 3.3, { align: 'right' });
       cx += columns[6].width;
 
       // Consumables
       const isConsumable = item.category === 'Sundry Consumable' || item.category === 'Other';
-      if (isConsumable) doc.text(item.amount.toFixed(2), cx + columns[7].width - 2, y + 3.3, { align: 'right' });
+      if (isConsumable) doc.text(item.amount.toFixed(2), cx + columns[7].width - 1.5, y + 3.3, { align: 'right' });
       cx += columns[7].width;
 
       // Account code
       cx += columns[8].width;
 
       // Fin.Entity Total column
-      doc.text(item.amount.toFixed(2), cx + columns[9].width - 2, y + 3.3, { align: 'right' });
+      doc.text(item.amount.toFixed(2), cx + columns[9].width - 1.5, y + 3.3, { align: 'right' });
     }
 
     y += 4.5;
@@ -248,11 +248,11 @@ export async function generateF2SummaryPdf(
   doc.text('For Finance Use Only', midX + 40, y + 3.5, { align: 'center' });
 
   const rightX = midX + 80;
-  doc.rect(rightX, y, 40, 5);
+  doc.rect(rightX, y, 32, 5);
   doc.text('Grand Total', rightX + 2, y + 3.5);
 
-  doc.rect(rightX + 40, y, 36, 5);
-  doc.text(grandTotal.toFixed(2), rightX + 74, y + 3.5, { align: 'right' });
+  doc.rect(rightX + 32, y, 30, 5);
+  doc.text(grandTotal.toFixed(2), rightX + 60, y + 3.5, { align: 'right' });
 
   y += 5;
 
@@ -262,12 +262,12 @@ export async function generateF2SummaryPdf(
   doc.setFontSize(7.5);
   doc.text('Account Code', midX + 2, y + 3.2);
 
-  doc.rect(rightX, y, 40, 4.5);
+  doc.rect(rightX, y, 32, 4.5);
   doc.setFont('helvetica', 'normal');
   doc.text('Advance from Company', rightX + 2, y + 3.2);
 
-  doc.rect(rightX + 40, y, 36, 4.5);
-  doc.text((headerInfo.advanceFromCompany || 0).toFixed(2), rightX + 74, y + 3.2, { align: 'right' });
+  doc.rect(rightX + 32, y, 30, 4.5);
+  doc.text((headerInfo.advanceFromCompany || 0).toFixed(2), rightX + 60, y + 3.2, { align: 'right' });
 
   y += 4.5;
 
@@ -275,11 +275,11 @@ export async function generateF2SummaryPdf(
   doc.rect(midX, y, 80, 4.5);
   doc.text('Date', midX + 2, y + 3.2);
 
-  doc.rect(rightX, y, 40, 4.5);
+  doc.rect(rightX, y, 32, 4.5);
   doc.text('Bank Balance  / previous bal', rightX + 2, y + 3.2);
 
-  doc.rect(rightX + 40, y, 36, 4.5);
-  doc.text((headerInfo.previousBalance || 0).toFixed(2), rightX + 74, y + 3.2, { align: 'right' });
+  doc.rect(rightX + 32, y, 30, 4.5);
+  doc.text((headerInfo.previousBalance || 0).toFixed(2), rightX + 60, y + 3.2, { align: 'right' });
 
   y += 4.5;
 
@@ -287,18 +287,18 @@ export async function generateF2SummaryPdf(
   doc.rect(midX, y, 80, 4.5);
   doc.text('No. of attachments', midX + 2, y + 3.2);
 
-  doc.rect(rightX, y, 40, 4.5);
+  doc.rect(rightX, y, 32, 4.5);
   doc.text('Cash in hand', rightX + 2, y + 3.2);
 
-  doc.rect(rightX + 40, y, 36, 4.5);
-  doc.text((headerInfo.cashInHand || 0).toFixed(2), rightX + 74, y + 3.2, { align: 'right' });
+  doc.rect(rightX + 32, y, 30, 4.5);
+  doc.text((headerInfo.cashInHand || 0).toFixed(2), rightX + 60, y + 3.2, { align: 'right' });
 
   y += 7;
 
   // -------------------------------------------------------------
-  // 6. BOTH SIGNATURES (SHOEB SIGNATURE & LEELA SIGNATURE OVERLAYS)
+  // 6. EXACT SIGNATURES SECTION (SHOEB SIGNATURE & LEELA SIGNATURE)
   // -------------------------------------------------------------
-  const sigColW = (pageWidth - margin * 2) / 3; // ~92mm each
+  const sigColW = (pageWidth - margin * 2) / 3; // ~92.3mm each
 
   // Box 1: Employee (Shoeb Ali Khan + Original Blue Shoeb Signature Overlay)
   doc.rect(margin, y, sigColW, 14);
@@ -318,7 +318,7 @@ export async function generateF2SummaryPdf(
 
   // Render Original Blue Shoeb Hand Signature Overlay
   try {
-    doc.addImage(SHOEB_SIGNATURE_BASE64, 'PNG', margin + 22, y + 5.5, 28, 7.5);
+    doc.addImage(SHOEB_SIGNATURE_BASE64, 'PNG', margin + 22, y + 4.5, 26, 8.5);
   } catch (e) {
     console.error('Error rendering Shoeb signature:', e);
   }
@@ -341,7 +341,7 @@ export async function generateF2SummaryPdf(
 
   // Render Original Blue Leela Hand Signature Overlay
   try {
-    doc.addImage(LEELA_SIGNATURE_BASE64, 'PNG', appX + 26, y + 5.5, 28, 7.5);
+    doc.addImage(LEELA_SIGNATURE_BASE64, 'PNG', appX + 30, y + 4.5, 26, 8.5);
   } catch (e) {
     console.error('Error rendering Leela signature:', e);
   }
