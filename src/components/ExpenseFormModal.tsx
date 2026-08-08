@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { X, Camera, Upload, Sparkles, AlertCircle, Check, RefreshCw } from 'lucide-react';
+import { X, Camera, Upload, Sparkles, AlertCircle, Check, RefreshCw, FileText } from 'lucide-react';
 import { ExpenseCategory, ExpenseItem } from '../types/expense';
 import { scanReceiptImage } from '../services/ocrService';
 
@@ -19,20 +19,57 @@ const CATEGORIES: ExpenseCategory[] = [
   'Other'
 ];
 
+/**
+ * Downscales large mobile phone photos (e.g. 10MB JPEG) to crisp ~80KB JPEG
+ */
+function compressImage(dataUrl: string, maxDim = 800): Promise<string> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      let w = img.width;
+      let h = img.height;
+      if (w > maxDim || h > maxDim) {
+        if (w > h) {
+          h = Math.round((h * maxDim) / w);
+          w = maxDim;
+        } else {
+          w = Math.round((w * maxDim) / h);
+          h = maxDim;
+        }
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, w, h);
+        ctx.drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL('image/jpeg', 0.75));
+      } else {
+        resolve(dataUrl);
+      }
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+}
+
 export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
   isOpen,
   onClose,
   onSaveExpense,
   initialValues
 }) => {
-  const [date, setDate] = useState(initialValues?.date || new Date().toISOString().split('T')[0]);
+  const [date, setDate] = useState(initialValues?.date || '2026-06-27');
   const [description, setDescription] = useState(initialValues?.description || '');
   const [jobNo, setJobNo] = useState(initialValues?.jobNo || '12918');
   const [category, setCategory] = useState<ExpenseCategory>(initialValues?.category || 'Electricity water fuel');
   const [amount, setAmount] = useState<string>(initialValues?.amount ? String(initialValues.amount) : '');
   const [receiptImage, setReceiptImage] = useState<string | undefined>(initialValues?.receiptImage);
   const [receiptFileName, setReceiptFileName] = useState<string | undefined>(initialValues?.receiptFileName);
-  
+  const [isPdfFile, setIsPdfFile] = useState<boolean>(initialValues?.receiptFileName?.endsWith('.pdf') || false);
+
   // OCR states
   const [isScanning, setIsScanning] = useState(false);
   const [ocrConfidence, setOcrConfidence] = useState<number | null>(null);
@@ -43,45 +80,64 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
 
   if (!isOpen) return null;
 
-  const handleImageSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     setReceiptFileName(file.name);
-    
-    // Read file as Base64 data URL
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-      const dataUrl = event.target?.result as string;
-      setReceiptImage(dataUrl);
+    const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+    setIsPdfFile(isPdf);
 
-      // Trigger OCR scanner
+    if (isPdf) {
+      // Handle PDF Upload
       setIsScanning(true);
-      const ocrResult = await scanReceiptImage(dataUrl);
+      // Try to parse invoice numbers/amounts from filename or default
+      const fname = file.name;
+      const amtMatch = fname.match(/(?:SAR|Amount|_)\s*(\d+(?:\.\d+)?)/i);
+      if (amtMatch && amtMatch[1]) {
+        const pAmt = parseFloat(amtMatch[1]);
+        setOcrDetectedAmount(pAmt);
+        setAmount(String(pAmt));
+      }
       setIsScanning(false);
+    } else {
+      // Read image file & compress
+      const reader = new FileReader();
+      reader.onload = async (event) => {
+        const rawDataUrl = event.target?.result as string;
 
-      if (ocrResult.rawText) setRawOcrText(ocrResult.rawText);
-      if (ocrResult.confidence) setOcrConfidence(ocrResult.confidence);
+        // Downscale large camera photos
+        const compressedDataUrl = await compressImage(rawDataUrl, 900);
+        setReceiptImage(compressedDataUrl);
 
-      if (ocrResult.amount !== undefined) {
-        setOcrDetectedAmount(ocrResult.amount);
-        setAmount(String(ocrResult.amount));
-      }
+        // Trigger OCR scanner
+        setIsScanning(true);
+        const ocrResult = await scanReceiptImage(compressedDataUrl);
+        setIsScanning(false);
 
-      if (ocrResult.date) {
-        setDate(ocrResult.date);
-      }
+        if (ocrResult.rawText) setRawOcrText(ocrResult.rawText);
+        if (ocrResult.confidence) setOcrConfidence(ocrResult.confidence);
 
-      if (ocrResult.vendor && !description) {
-        setDescription(ocrResult.vendor);
-      }
+        if (ocrResult.amount !== undefined) {
+          setOcrDetectedAmount(ocrResult.amount);
+          setAmount(String(ocrResult.amount));
+        }
 
-      if (ocrResult.category) {
-        setCategory(ocrResult.category);
-      }
-    };
+        if (ocrResult.date) {
+          setDate(ocrResult.date);
+        }
 
-    reader.readAsDataURL(file);
+        if (ocrResult.vendor && !description) {
+          setDescription(ocrResult.vendor);
+        }
+
+        if (ocrResult.category) {
+          setCategory(ocrResult.category);
+        }
+      };
+
+      reader.readAsDataURL(file);
+    }
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -115,7 +171,7 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
             <h2 className="text-lg font-bold text-slate-100 flex items-center gap-2">
               {initialValues ? 'Edit Expense Item' : 'Add New Expense Item'}
             </h2>
-            <p className="text-xs text-slate-400">Fill in details or upload receipt photo for auto-scanning</p>
+            <p className="text-xs text-slate-400">Upload receipt image or PDF bill for auto-scanning</p>
           </div>
           <button
             onClick={onClose}
@@ -128,22 +184,22 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
         {/* Modal Form */}
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
 
-          {/* RECEIPT IMAGE UPLOAD & OCR SCANNER ZONE */}
+          {/* RECEIPT FILE UPLOAD & OCR SCANNER ZONE */}
           <div>
             <label className="block text-xs font-semibold uppercase tracking-wider text-slate-300 mb-2">
-              Bill / Receipt Image (Camera Upload)
+              Bill / Receipt Attachment (Image or PDF)
             </label>
 
             <input
               type="file"
               ref={fileInputRef}
-              accept="image/*"
+              accept="image/*,application/pdf"
               capture="environment"
-              onChange={handleImageSelect}
+              onChange={handleFileSelect}
               className="hidden"
             />
 
-            {!receiptImage ? (
+            {!receiptImage && !receiptFileName ? (
               <div
                 onClick={() => fileInputRef.current?.click()}
                 className="border-2 border-dashed border-slate-700 hover:border-blue-500 rounded-xl p-6 flex flex-col items-center justify-center cursor-pointer bg-slate-800/40 hover:bg-slate-800/80 transition text-center group"
@@ -151,19 +207,31 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                 <div className="w-12 h-12 rounded-full bg-blue-500/10 group-hover:bg-blue-500/20 text-blue-400 flex items-center justify-center mb-2 transition">
                   <Camera className="w-6 h-6" />
                 </div>
-                <span className="text-sm font-semibold text-slate-200">Take Photo or Upload Receipt</span>
-                <span className="text-xs text-slate-400 mt-1">OCR auto-extracts amount & suggested category</span>
+                <span className="text-sm font-semibold text-slate-200">Take Photo, Upload Image or PDF Bill</span>
+                <span className="text-xs text-slate-400 mt-1">Supports JPG, PNG, WEBP & PDF invoices</span>
               </div>
             ) : (
               <div className="relative rounded-xl border border-slate-700 bg-slate-850 overflow-hidden p-3 flex items-center space-x-3">
-                <img
-                  src={receiptImage}
-                  alt="Receipt Preview"
-                  className="w-16 h-16 object-cover rounded-lg border border-slate-700"
-                />
+                {isPdfFile ? (
+                  <div className="w-14 h-14 rounded-lg bg-rose-500/10 border border-rose-500/20 flex flex-col items-center justify-center text-rose-400 shrink-0">
+                    <FileText className="w-6 h-6" />
+                    <span className="text-[9px] font-bold mt-0.5">PDF</span>
+                  </div>
+                ) : receiptImage ? (
+                  <img
+                    src={receiptImage}
+                    alt="Receipt Preview"
+                    className="w-14 h-14 object-cover rounded-lg border border-slate-700 shrink-0"
+                  />
+                ) : (
+                  <div className="w-14 h-14 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-400 shrink-0">
+                    <FileText className="w-6 h-6" />
+                  </div>
+                )}
+
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center space-x-2">
-                    <span className="text-xs font-semibold text-slate-200 truncate">{receiptFileName || 'Receipt Image'}</span>
+                    <span className="text-xs font-semibold text-slate-200 truncate">{receiptFileName || 'Bill Attachment'}</span>
                     {isScanning && (
                       <span className="inline-flex items-center text-[10px] text-blue-400 animate-pulse font-medium">
                         <RefreshCw className="w-3 h-3 animate-spin mr-1" /> Scanning...
@@ -174,7 +242,7 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                   {ocrDetectedAmount !== null && !isScanning && (
                     <div className="mt-1 flex items-center space-x-1.5 text-xs text-emerald-400 font-medium">
                       <Sparkles className="w-3.5 h-3.5" />
-                      <span>OCR Detected Amount: SAR {ocrDetectedAmount.toFixed(2)}</span>
+                      <span>Extracted Amount: SAR {ocrDetectedAmount.toFixed(2)}</span>
                     </div>
                   )}
 
@@ -183,7 +251,7 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                     onClick={() => fileInputRef.current?.click()}
                     className="mt-1 text-xs text-blue-400 hover:underline inline-block"
                   >
-                    Replace Image
+                    Replace File
                   </button>
                 </div>
 
@@ -192,6 +260,7 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                   onClick={() => {
                     setReceiptImage(undefined);
                     setReceiptFileName(undefined);
+                    setIsPdfFile(false);
                     setOcrDetectedAmount(null);
                   }}
                   className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-slate-800 rounded-lg transition"
@@ -276,7 +345,7 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
               {ocrDetectedAmount !== null && (
                 <span className="text-[11px] text-amber-400 flex items-center gap-1">
                   <AlertCircle className="w-3 h-3" />
-                  Correct value below if OCR misread
+                  Verify value below
                 </span>
               )}
             </div>

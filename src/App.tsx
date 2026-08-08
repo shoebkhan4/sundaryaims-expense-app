@@ -73,13 +73,21 @@ export default function App() {
 
   const [isEditingTitle, setIsEditingTitle] = useState(false);
 
-  // Save to localStorage on change
+  // Save to localStorage on change safely
   React.useEffect(() => {
-    localStorage.setItem('aims_header_info', JSON.stringify(headerInfo));
+    try {
+      localStorage.setItem('aims_header_info', JSON.stringify(headerInfo));
+    } catch (e) {
+      console.warn('localStorage save failed for headerInfo', e);
+    }
   }, [headerInfo]);
 
   React.useEffect(() => {
-    localStorage.setItem('aims_expenses', JSON.stringify(expenses));
+    try {
+      localStorage.setItem('aims_expenses', JSON.stringify(expenses));
+    } catch (e) {
+      console.warn('localStorage save failed for expenses', e);
+    }
   }, [expenses]);
 
   // Modals state
