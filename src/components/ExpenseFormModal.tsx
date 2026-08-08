@@ -12,6 +12,9 @@ interface ExpenseFormModalProps {
 
 const CATEGORIES: ExpenseCategory[] = [
   'Electricity water fuel',
+  'Site Food',
+  'Project Material',
+  'Online Parts Purchased (Project)',
   'Site Office small repair',
   'Spot rental equpt',
   'Site Tools equpt',
@@ -19,9 +22,6 @@ const CATEGORIES: ExpenseCategory[] = [
   'Other'
 ];
 
-/**
- * Downscales large mobile phone photos (e.g. 10MB JPEG) to crisp ~80KB JPEG
- */
 function compressImage(dataUrl: string, maxDim = 800): Promise<string> {
   return new Promise((resolve) => {
     const img = new Image();
@@ -61,7 +61,7 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
   onSaveExpense,
   initialValues
 }) => {
-  const [date, setDate] = useState(initialValues?.date || '2026-06-27');
+  const [date, setDate] = useState(initialValues?.date || new Date().toISOString().split('T')[0]);
   const [description, setDescription] = useState(initialValues?.description || '');
   const [jobNo, setJobNo] = useState(initialValues?.jobNo || '12918');
   const [category, setCategory] = useState<ExpenseCategory>(initialValues?.category || 'Electricity water fuel');
@@ -72,7 +72,6 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
 
   // OCR states
   const [isScanning, setIsScanning] = useState(false);
-  const [ocrConfidence, setOcrConfidence] = useState<number | null>(null);
   const [ocrDetectedAmount, setOcrDetectedAmount] = useState<number | null>(null);
   const [rawOcrText, setRawOcrText] = useState<string>('');
 
@@ -89,9 +88,7 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
     setIsPdfFile(isPdf);
 
     if (isPdf) {
-      // Handle PDF Upload
       setIsScanning(true);
-      // Try to parse invoice numbers/amounts from filename or default
       const fname = file.name;
       const amtMatch = fname.match(/(?:SAR|Amount|_)\s*(\d+(?:\.\d+)?)/i);
       if (amtMatch && amtMatch[1]) {
@@ -101,22 +98,17 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
       }
       setIsScanning(false);
     } else {
-      // Read image file & compress
       const reader = new FileReader();
       reader.onload = async (event) => {
         const rawDataUrl = event.target?.result as string;
-
-        // Downscale large camera photos
         const compressedDataUrl = await compressImage(rawDataUrl, 900);
         setReceiptImage(compressedDataUrl);
 
-        // Trigger OCR scanner
         setIsScanning(true);
         const ocrResult = await scanReceiptImage(compressedDataUrl);
         setIsScanning(false);
 
         if (ocrResult.rawText) setRawOcrText(ocrResult.rawText);
-        if (ocrResult.confidence) setOcrConfidence(ocrResult.confidence);
 
         if (ocrResult.amount !== undefined) {
           setOcrDetectedAmount(ocrResult.amount);
@@ -202,9 +194,9 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
             {!receiptImage && !receiptFileName ? (
               <div
                 onClick={() => fileInputRef.current?.click()}
-                className="border-2 border-dashed border-slate-700 hover:border-blue-500 rounded-xl p-6 flex flex-col items-center justify-center cursor-pointer bg-slate-800/40 hover:bg-slate-800/80 transition text-center group"
+                className="border-2 border-dashed border-slate-700 hover:border-cyan-500 rounded-xl p-6 flex flex-col items-center justify-center cursor-pointer bg-slate-800/40 hover:bg-slate-800/80 transition text-center group"
               >
-                <div className="w-12 h-12 rounded-full bg-blue-500/10 group-hover:bg-blue-500/20 text-blue-400 flex items-center justify-center mb-2 transition">
+                <div className="w-12 h-12 rounded-full bg-cyan-500/10 group-hover:bg-cyan-500/20 text-cyan-400 flex items-center justify-center mb-2 transition">
                   <Camera className="w-6 h-6" />
                 </div>
                 <span className="text-sm font-semibold text-slate-200">Take Photo, Upload Image or PDF Bill</span>
@@ -233,7 +225,7 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                   <div className="flex items-center space-x-2">
                     <span className="text-xs font-semibold text-slate-200 truncate">{receiptFileName || 'Bill Attachment'}</span>
                     {isScanning && (
-                      <span className="inline-flex items-center text-[10px] text-blue-400 animate-pulse font-medium">
+                      <span className="inline-flex items-center text-[10px] text-cyan-400 animate-pulse font-medium">
                         <RefreshCw className="w-3 h-3 animate-spin mr-1" /> Scanning...
                       </span>
                     )}
@@ -249,7 +241,7 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
-                    className="mt-1 text-xs text-blue-400 hover:underline inline-block"
+                    className="mt-1 text-xs text-cyan-400 hover:underline inline-block"
                   >
                     Replace File
                   </button>
@@ -283,7 +275,7 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                 required
                 value={date}
                 onChange={(e) => setDate(e.target.value)}
-                className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-blue-500"
+                className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-cyan-500"
               />
             </div>
 
@@ -298,7 +290,7 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                 placeholder="e.g. 12918 or 14983"
                 value={jobNo}
                 onChange={(e) => setJobNo(e.target.value)}
-                className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-blue-500"
+                className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-cyan-500"
               />
             </div>
           </div>
@@ -311,10 +303,10 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
             <input
               type="text"
               required
-              placeholder="e.g. Site Fuel - FGP (6 Visit) or AI Subscription"
+              placeholder="e.g. Site Food, Project Material, Site Fuel, etc."
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-blue-500"
+              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-cyan-500"
             />
           </div>
 
@@ -326,7 +318,7 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
             <select
               value={category}
               onChange={(e) => setCategory(e.target.value as ExpenseCategory)}
-              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-blue-500"
+              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-cyan-500"
             >
               {CATEGORIES.map((cat) => (
                 <option key={cat} value={cat}>
@@ -358,7 +350,7 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                 placeholder="0.00"
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
-                className="w-full bg-slate-800 border border-slate-700 rounded-lg pl-14 pr-3 py-2 text-base font-bold text-emerald-400 focus:outline-none focus:border-blue-500"
+                className="w-full bg-slate-800 border border-slate-700 rounded-lg pl-14 pr-3 py-2 text-base font-bold text-emerald-400 focus:outline-none focus:border-cyan-500"
               />
             </div>
           </div>
@@ -374,7 +366,7 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
             </button>
             <button
               type="submit"
-              className="px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold shadow-lg shadow-blue-600/30 transition flex items-center gap-2"
+              className="px-5 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-bold shadow-lg shadow-cyan-600/30 transition flex items-center gap-2"
             >
               <Check className="w-4 h-4" />
               <span>Save Expense</span>

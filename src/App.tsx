@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { CompanyHeaderInfo, ExpenseItem } from './types/expense';
 import { Navbar } from './components/Navbar';
 import { ExpenseList } from './components/ExpenseList';
@@ -7,7 +7,7 @@ import { ExpenseFormModal } from './components/ExpenseFormModal';
 import { F2PdfPreviewModal } from './components/F2PdfPreviewModal';
 import { OutlookModal } from './components/OutlookModal';
 import { HistoryDrawer } from './components/HistoryDrawer';
-import { Plus, Send, FileText, Sparkles, Building2, UserCheck, Calendar, Edit3, RotateCcw } from 'lucide-react';
+import { Plus, Send, FileText, Sparkles, Building2, UserCheck, Calendar, Edit3, RotateCcw, Layers } from 'lucide-react';
 
 const INITIAL_HEADER_INFO: CompanyHeaderInfo = {
   companyName: 'HADAF AL AIMS TRADING CO.',
@@ -16,13 +16,43 @@ const INITIAL_HEADER_INFO: CompanyHeaderInfo = {
   badgeNo: 'xx',
   placeSite: 'KSA',
   currency: 'SAR',
-  expenseTypeSummary: 'Sundry Expenses August 2026',
+  expenseTypeSummary: 'Sundry expenses August 2026',
   approverName: 'Leela Venkat',
   dateSubmitted: new Date().toISOString().split('T')[0],
   advanceFromCompany: 0,
   previousBalance: 0,
-  cashInHand: 0
+  cashInHand: 0,
+  consolidateCategories: true
 };
+
+/**
+ * Automatically inspects item dates and generates dynamic multi-month or single-month Expense Type Title (Requirement 3)
+ */
+function detectExpenseTypeSummary(items: ExpenseItem[]): string {
+  if (items.length === 0) return 'Sundry expenses August 2026';
+
+  const monthsMap: Record<string, Set<number>> = {};
+  const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+  items.forEach(item => {
+    if (!item.date) return;
+    const d = new Date(item.date);
+    if (isNaN(d.getTime())) return;
+    const year = d.getFullYear();
+    const monthIdx = d.getMonth();
+    if (!monthsMap[year]) monthsMap[year] = new Set();
+    monthsMap[year].add(monthIdx);
+  });
+
+  const years = Object.keys(monthsMap).sort();
+  if (years.length === 0) return 'Sundry expenses August 2026';
+
+  const latestYear = years[years.length - 1];
+  const sortedMonthIndices = Array.from(monthsMap[latestYear]).sort((a, b) => a - b);
+  const formattedMonthNames = sortedMonthIndices.map(m => monthNames[m]).join(', ');
+
+  return `Sundry expenses ${formattedMonthNames} ${latestYear}`;
+}
 
 export default function App() {
   const [headerInfo, setHeaderInfo] = useState<CompanyHeaderInfo>(() => {
@@ -37,8 +67,16 @@ export default function App() {
 
   const [isEditingTitle, setIsEditingTitle] = useState(false);
 
-  // Save to localStorage on change safely
-  React.useEffect(() => {
+  // Auto-detect multi-month title whenever expenses change (Requirement 3)
+  useEffect(() => {
+    if (expenses.length > 0) {
+      const autoTitle = detectExpenseTypeSummary(expenses);
+      setHeaderInfo(prev => ({ ...prev, expenseTypeSummary: autoTitle }));
+    }
+  }, [expenses]);
+
+  // Save to localStorage safely
+  useEffect(() => {
     try {
       localStorage.setItem('aims_header_info', JSON.stringify(headerInfo));
     } catch (e) {
@@ -46,7 +84,7 @@ export default function App() {
     }
   }, [headerInfo]);
 
-  React.useEffect(() => {
+  useEffect(() => {
     try {
       localStorage.setItem('aims_expenses', JSON.stringify(expenses));
     } catch (e) {
@@ -68,7 +106,7 @@ export default function App() {
       setHeaderInfo({
         ...INITIAL_HEADER_INFO,
         dateSubmitted: new Date().toISOString().split('T')[0],
-        expenseTypeSummary: 'Sundry Expenses August 2026'
+        expenseTypeSummary: 'Sundry expenses August 2026'
       });
       setExpenses([]);
       localStorage.removeItem('aims_expenses');
@@ -104,7 +142,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
       
-      {/* Sticky Header Navbar */}
+      {/* Sticky Header Navbar (AIMS Cyan Branding) */}
       <Navbar
         onOpenAddModal={() => {
           setEditingExpense(null);
@@ -123,14 +161,14 @@ export default function App() {
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
         
         {/* TOP SUMMARY BANNER CARD */}
-        <div className="bg-gradient-to-r from-slate-900 via-slate-850 to-blue-950/40 border border-slate-800 rounded-2xl p-6 shadow-xl relative overflow-hidden">
+        <div className="bg-gradient-to-r from-slate-900 via-slate-850 to-cyan-950/40 border border-slate-800 rounded-2xl p-6 shadow-xl relative overflow-hidden">
           
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
             
             {/* Header Info Details */}
             <div className="space-y-3 flex-1">
               <div className="flex flex-wrap items-center gap-3">
-                <span className="px-2.5 py-1 rounded-md bg-blue-500/10 border border-blue-500/20 text-blue-400 text-xs font-bold uppercase tracking-wider">
+                <span className="px-2.5 py-1 rounded-md bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 text-xs font-bold uppercase tracking-wider">
                   Company F2 Form Draft
                 </span>
 
@@ -141,20 +179,26 @@ export default function App() {
                     type="date"
                     value={headerInfo.dateSubmitted}
                     onChange={(e) => handleUpdateHeaderInfo({ dateSubmitted: e.target.value })}
-                    className="bg-slate-900 border border-slate-700 text-slate-200 text-xs font-semibold px-2 py-0.5 rounded focus:outline-none focus:border-blue-500"
+                    className="bg-slate-900 border border-slate-700 text-slate-200 text-xs font-semibold px-2 py-0.5 rounded focus:outline-none focus:border-cyan-500"
                   />
                 </div>
 
+                {/* Category Consolidation Mode Toggle (Requirement 4) */}
                 <button
-                  onClick={handleStartNewReport}
-                  className="px-2.5 py-1 rounded-md bg-slate-800 hover:bg-slate-700 text-amber-400 text-xs font-semibold border border-slate-700 transition flex items-center gap-1"
+                  onClick={() => handleUpdateHeaderInfo({ consolidateCategories: !headerInfo.consolidateCategories })}
+                  className={`px-2.5 py-1 rounded-md text-xs font-semibold border transition flex items-center gap-1.5 ${
+                    headerInfo.consolidateCategories
+                      ? 'bg-cyan-500/15 border-cyan-500/30 text-cyan-300'
+                      : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-slate-200'
+                  }`}
+                  title="Toggle point-wise category grouping on F2 Form PDF"
                 >
-                  <RotateCcw className="w-3 h-3" />
-                  <span>Start Blank Report</span>
+                  <Layers className="w-3.5 h-3.5" />
+                  <span>PDF Mode: {headerInfo.consolidateCategories ? 'Category Grouped' : 'Individual Rows'}</span>
                 </button>
               </div>
 
-              {/* Editable Report Title / Period */}
+              {/* Editable Report Title / Auto Month Detection */}
               <div className="group relative max-w-2xl">
                 {isEditingTitle ? (
                   <input
@@ -164,18 +208,18 @@ export default function App() {
                     onChange={(e) => handleUpdateHeaderInfo({ expenseTypeSummary: e.target.value })}
                     onBlur={() => setIsEditingTitle(false)}
                     onKeyDown={(e) => e.key === 'Enter' && setIsEditingTitle(false)}
-                    className="w-full text-xl sm:text-2xl font-extrabold text-white bg-slate-900 border border-blue-500 rounded-lg px-3 py-1 focus:outline-none"
+                    className="w-full text-xl sm:text-2xl font-extrabold text-white bg-slate-900 border border-cyan-500 rounded-lg px-3 py-1 focus:outline-none"
                   />
                 ) : (
                   <div
                     onClick={() => setIsEditingTitle(true)}
                     className="flex items-center space-x-2 cursor-pointer hover:bg-slate-800/50 p-1.5 rounded-lg -ml-1.5 transition"
-                    title="Click to edit expense period description"
+                    title="Auto-detected from bill dates. Click to edit manually."
                   >
                     <h2 className="text-xl sm:text-2xl font-extrabold text-slate-100 tracking-tight">
                       {headerInfo.expenseTypeSummary}
                     </h2>
-                    <Edit3 className="w-4 h-4 text-blue-400 opacity-60 group-hover:opacity-100 transition" />
+                    <Edit3 className="w-4 h-4 text-cyan-400 opacity-60 group-hover:opacity-100 transition" />
                   </div>
                 )}
               </div>
@@ -185,14 +229,14 @@ export default function App() {
                 
                 {/* Employee Name */}
                 <div className="flex items-center space-x-2 bg-slate-900/60 p-2 rounded-lg border border-slate-800">
-                  <Building2 className="w-4 h-4 text-blue-400 shrink-0" />
+                  <Building2 className="w-4 h-4 text-cyan-400 shrink-0" />
                   <div className="min-w-0 flex-1">
                     <span className="text-slate-500 block text-[10px] uppercase font-semibold">Employee</span>
                     <input
                       type="text"
                       value={headerInfo.employeeName}
                       onChange={(e) => handleUpdateHeaderInfo({ employeeName: e.target.value })}
-                      className="bg-transparent font-semibold text-slate-200 w-full focus:outline-none border-b border-transparent hover:border-slate-600 focus:border-blue-500"
+                      className="bg-transparent font-semibold text-slate-200 w-full focus:outline-none border-b border-transparent hover:border-slate-600 focus:border-cyan-500"
                     />
                   </div>
                 </div>
@@ -206,7 +250,7 @@ export default function App() {
                       type="text"
                       value={headerInfo.placeSite}
                       onChange={(e) => handleUpdateHeaderInfo({ placeSite: e.target.value })}
-                      className="bg-transparent font-semibold text-slate-200 w-full focus:outline-none border-b border-transparent hover:border-slate-600 focus:border-blue-500"
+                      className="bg-transparent font-semibold text-slate-200 w-full focus:outline-none border-b border-transparent hover:border-slate-600 focus:border-cyan-500"
                     />
                   </div>
                 </div>
@@ -220,7 +264,7 @@ export default function App() {
                       type="text"
                       value={headerInfo.approverName}
                       onChange={(e) => handleUpdateHeaderInfo({ approverName: e.target.value })}
-                      className="bg-transparent font-semibold text-slate-200 w-full focus:outline-none border-b border-transparent hover:border-slate-600 focus:border-blue-500"
+                      className="bg-transparent font-semibold text-slate-200 w-full focus:outline-none border-b border-transparent hover:border-slate-600 focus:border-cyan-500"
                     />
                   </div>
                 </div>
@@ -234,7 +278,7 @@ export default function App() {
                       type="text"
                       value={headerInfo.currency}
                       onChange={(e) => handleUpdateHeaderInfo({ currency: e.target.value })}
-                      className="bg-transparent font-semibold text-slate-200 w-full focus:outline-none border-b border-transparent hover:border-slate-600 focus:border-blue-500"
+                      className="bg-transparent font-semibold text-slate-200 w-full focus:outline-none border-b border-transparent hover:border-slate-600 focus:border-cyan-500"
                     />
                   </div>
                 </div>
@@ -253,7 +297,7 @@ export default function App() {
                 <button
                   onClick={() => setIsOutlookModalOpen(true)}
                   disabled={expenses.length === 0}
-                  className="flex-1 sm:flex-none px-4 py-2.5 rounded-xl bg-gradient-to-r from-sky-600 to-blue-600 hover:from-sky-500 hover:to-blue-500 text-white font-bold text-xs shadow-lg transition flex items-center justify-center gap-2 disabled:opacity-50"
+                  className="flex-1 sm:flex-none px-4 py-2.5 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold text-xs shadow-lg transition flex items-center justify-center gap-2 disabled:opacity-50"
                 >
                   <Send className="w-4 h-4" />
                   <span>Send Outlook</span>

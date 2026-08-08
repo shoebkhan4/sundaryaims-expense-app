@@ -4,6 +4,9 @@ export type ExpenseCategory =
   | 'Spot rental equpt'
   | 'Site Tools equpt'
   | 'Sundry Consumable'
+  | 'Site Food'
+  | 'Project Material'
+  | 'Online Parts Purchased (Project)'
   | 'Other';
 
 export interface ExpenseItem {
@@ -33,6 +36,7 @@ export interface CompanyHeaderInfo {
   advanceFromCompany: number;
   previousBalance: number;
   cashInHand: number;
+  consolidateCategories?: boolean; // toggle for point-wise category row grouping on F2 PDF
 }
 
 export interface OutlookSubmission {

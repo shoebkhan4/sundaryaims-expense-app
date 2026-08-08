@@ -21,7 +21,7 @@ export async function generateF2SummaryPdf(
   let y = 10;
 
   // -------------------------------------------------------------
-  // 1. EXACT FORM HEADER & LOGOS (Matching Original F2 Form PDF)
+  // 1. EXACT FORM HEADER & LOGOS (AIMS Cyan #00A3E0 & Yellow #FFC20E)
   // -------------------------------------------------------------
   
   // Left: Original AIMS Cyan/Blue Logo
@@ -54,7 +54,7 @@ export async function generateF2SummaryPdf(
   y += 16;
 
   // -------------------------------------------------------------
-  // 2. FORM METADATA GRID (Exact Table Borders & Fields)
+  // 2. FORM METADATA GRID (Requirement 5: First Name cell is EMPTY)
   // -------------------------------------------------------------
   doc.setLineWidth(0.3);
   doc.setDrawColor(0, 0, 0);
@@ -94,12 +94,12 @@ export async function generateF2SummaryPdf(
 
   y += 5;
 
-  // Row 3
+  // Row 3: FIRST NAME CELL KEPT EMPTY (Requirement 5)
   doc.rect(margin, y, 130, 5);
   doc.setFont('helvetica', 'bold');
   doc.text('First Name', margin + 2, y + 3.8);
   doc.setFont('helvetica', 'normal');
-  doc.text('Direct.or BU', margin + 30, y + 3.8);
+  doc.text('', margin + 30, y + 3.8); // EMPTY as requested
 
   doc.rect(margin + 130, y, 30, 5);
   doc.setFont('helvetica', 'normal');
@@ -123,11 +123,11 @@ export async function generateF2SummaryPdf(
   y += 7;
 
   // -------------------------------------------------------------
-  // 3. TABLE HEADERS (Fits perfectly within 277mm page width)
+  // 3. TABLE HEADERS
   // -------------------------------------------------------------
   const columns = [
-    { header: 'Date of\nExpense', width: 20 },
-    { header: 'Description', width: 95 },
+    { header: 'Date of\nExpense', width: 22 },
+    { header: 'Description', width: 93 },
     { header: 'Job no.', width: 20 },
     { header: 'Electricity water\nfuel', width: 24 },
     { header: 'Site Office\nsmall repair', width: 22 },
@@ -157,10 +157,21 @@ export async function generateF2SummaryPdf(
   y += 10;
 
   // -------------------------------------------------------------
-  // 4. TABLE ROWS (Grid lines with 18 empty row lines like Excel)
+  // 4. TABLE ROWS (Requirement 4: Category Grouping or Individual Rows)
   // -------------------------------------------------------------
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(7.5);
+
+  // Group items by category if consolidateCategories is enabled or by default
+  const processedRows = headerInfo.consolidateCategories
+    ? groupExpensesByCategory(expenses)
+    : expenses.map(e => ({
+        dateRange: e.date,
+        description: e.description,
+        jobNo: e.jobNo,
+        category: mapToF2Category(e.category),
+        amount: e.amount
+      }));
 
   const categorySums: Record<string, number> = {
     'Electricity water fuel': 0,
@@ -173,7 +184,7 @@ export async function generateF2SummaryPdf(
   const totalGridRows = 18;
 
   for (let r = 0; r < totalGridRows; r++) {
-    const item = expenses[r];
+    const rowData = processedRows[r];
 
     let rx = margin;
     columns.forEach(col => {
@@ -181,57 +192,54 @@ export async function generateF2SummaryPdf(
       rx += col.width;
     });
 
-    if (item) {
-      if (categorySums[item.category] !== undefined) {
-        categorySums[item.category] += item.amount;
+    if (rowData) {
+      if (categorySums[rowData.category] !== undefined) {
+        categorySums[rowData.category] += rowData.amount;
       } else {
-        categorySums['Sundry Consumable'] += item.amount;
+        categorySums['Sundry Consumable'] += rowData.amount;
       }
 
       let cx = margin;
-      // Date
-      doc.text(item.date || '', cx + 1.5, y + 3.3);
+      // Date Range Column
+      const dateText = rowData.dateRange.length > 18 ? rowData.dateRange.substring(0, 16) + '...' : rowData.dateRange;
+      doc.text(dateText || '', cx + 1.5, y + 3.3);
       cx += columns[0].width;
 
-      // Description
-      const descText = item.description.length > 65 ? item.description.substring(0, 63) + '...' : item.description;
+      // Description Column (Point-wise listed descriptions)
+      const descText = rowData.description.length > 65 ? rowData.description.substring(0, 63) + '...' : rowData.description;
       doc.text(descText, cx + 1.5, y + 3.3);
       cx += columns[1].width;
 
       // Job no
-      doc.text(item.jobNo || '', cx + 1.5, y + 3.3);
+      doc.text(rowData.jobNo || '', cx + 1.5, y + 3.3);
       cx += columns[2].width;
 
-      // Fuel
-      const isFuel = item.category === 'Electricity water fuel';
-      if (isFuel) doc.text(item.amount.toFixed(2), cx + columns[3].width - 1.5, y + 3.3, { align: 'right' });
+      // Category Amounts
+      const isFuel = rowData.category === 'Electricity water fuel';
+      if (isFuel) doc.text(rowData.amount.toFixed(2), cx + columns[3].width - 1.5, y + 3.3, { align: 'right' });
       cx += columns[3].width;
 
-      // Repair
-      const isRepair = item.category === 'Site Office small repair';
-      if (isRepair) doc.text(item.amount.toFixed(2), cx + columns[4].width - 1.5, y + 3.3, { align: 'right' });
+      const isRepair = rowData.category === 'Site Office small repair';
+      if (isRepair) doc.text(rowData.amount.toFixed(2), cx + columns[4].width - 1.5, y + 3.3, { align: 'right' });
       cx += columns[4].width;
 
-      // Rental
-      const isRental = item.category === 'Spot rental equpt';
-      if (isRental) doc.text(item.amount.toFixed(2), cx + columns[5].width - 1.5, y + 3.3, { align: 'right' });
+      const isRental = rowData.category === 'Spot rental equpt';
+      if (isRental) doc.text(rowData.amount.toFixed(2), cx + columns[5].width - 1.5, y + 3.3, { align: 'right' });
       cx += columns[5].width;
 
-      // Tools
-      const isTools = item.category === 'Site Tools equpt';
-      if (isTools) doc.text(item.amount.toFixed(2), cx + columns[6].width - 1.5, y + 3.3, { align: 'right' });
+      const isTools = rowData.category === 'Site Tools equpt';
+      if (isTools) doc.text(rowData.amount.toFixed(2), cx + columns[6].width - 1.5, y + 3.3, { align: 'right' });
       cx += columns[6].width;
 
-      // Consumables
-      const isConsumable = item.category === 'Sundry Consumable' || item.category === 'Other';
-      if (isConsumable) doc.text(item.amount.toFixed(2), cx + columns[7].width - 1.5, y + 3.3, { align: 'right' });
+      const isConsumable = rowData.category === 'Sundry Consumable';
+      if (isConsumable) doc.text(rowData.amount.toFixed(2), cx + columns[7].width - 1.5, y + 3.3, { align: 'right' });
       cx += columns[7].width;
 
       // Account code
       cx += columns[8].width;
 
       // Fin.Entity Total column
-      doc.text(item.amount.toFixed(2), cx + columns[9].width - 1.5, y + 3.3, { align: 'right' });
+      doc.text(rowData.amount.toFixed(2), cx + columns[9].width - 1.5, y + 3.3, { align: 'right' });
     }
 
     y += 4.5;
@@ -244,54 +252,54 @@ export async function generateF2SummaryPdf(
   doc.setFontSize(8);
   
   const midX = margin + columns[0].width + columns[1].width + columns[2].width;
-  doc.rect(midX, y, 80, 5);
-  doc.text('For Finance Use Only', midX + 40, y + 3.5, { align: 'center' });
+  doc.rect(midX, y, 78, 5);
+  doc.text('For Finance Use Only', midX + 39, y + 3.5, { align: 'center' });
 
-  const rightX = midX + 80;
-  doc.rect(rightX, y, 32, 5);
+  const rightX = midX + 78;
+  doc.rect(rightX, y, 34, 5);
   doc.text('Grand Total', rightX + 2, y + 3.5);
 
-  doc.rect(rightX + 32, y, 30, 5);
-  doc.text(grandTotal.toFixed(2), rightX + 60, y + 3.5, { align: 'right' });
+  doc.rect(rightX + 34, y, 30, 5);
+  doc.text(grandTotal.toFixed(2), rightX + 58, y + 3.5, { align: 'right' });
 
   y += 5;
 
   // Row 2: Advance from Company
-  doc.rect(midX, y, 80, 4.5);
+  doc.rect(midX, y, 78, 4.5);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(7.5);
   doc.text('Account Code', midX + 2, y + 3.2);
 
-  doc.rect(rightX, y, 32, 4.5);
+  doc.rect(rightX, y, 34, 4.5);
   doc.setFont('helvetica', 'normal');
   doc.text('Advance from Company', rightX + 2, y + 3.2);
 
-  doc.rect(rightX + 32, y, 30, 4.5);
-  doc.text((headerInfo.advanceFromCompany || 0).toFixed(2), rightX + 60, y + 3.2, { align: 'right' });
+  doc.rect(rightX + 34, y, 30, 4.5);
+  doc.text((headerInfo.advanceFromCompany || 0).toFixed(2), rightX + 58, y + 3.2, { align: 'right' });
 
   y += 4.5;
 
   // Row 3: Bank Balance / previous bal
-  doc.rect(midX, y, 80, 4.5);
+  doc.rect(midX, y, 78, 4.5);
   doc.text('Date', midX + 2, y + 3.2);
 
-  doc.rect(rightX, y, 32, 4.5);
+  doc.rect(rightX, y, 34, 4.5);
   doc.text('Bank Balance  / previous bal', rightX + 2, y + 3.2);
 
-  doc.rect(rightX + 32, y, 30, 4.5);
-  doc.text((headerInfo.previousBalance || 0).toFixed(2), rightX + 60, y + 3.2, { align: 'right' });
+  doc.rect(rightX + 34, y, 30, 4.5);
+  doc.text((headerInfo.previousBalance || 0).toFixed(2), rightX + 58, y + 3.2, { align: 'right' });
 
   y += 4.5;
 
   // Row 4: No. of attachments / Cash in hand
-  doc.rect(midX, y, 80, 4.5);
+  doc.rect(midX, y, 78, 4.5);
   doc.text('No. of attachments', midX + 2, y + 3.2);
 
-  doc.rect(rightX, y, 32, 4.5);
+  doc.rect(rightX, y, 34, 4.5);
   doc.text('Cash in hand', rightX + 2, y + 3.2);
 
-  doc.rect(rightX + 32, y, 30, 4.5);
-  doc.text((headerInfo.cashInHand || 0).toFixed(2), rightX + 60, y + 3.2, { align: 'right' });
+  doc.rect(rightX + 34, y, 30, 4.5);
+  doc.text((headerInfo.cashInHand || 0).toFixed(2), rightX + 58, y + 3.2, { align: 'right' });
 
   y += 7;
 
@@ -368,6 +376,61 @@ export async function generateF2SummaryPdf(
 }
 
 /**
+ * Maps new granular site categories (e.g. Site Food, Project Material, etc.) to F2 Form table columns
+ */
+function mapToF2Category(cat: string): string {
+  if (cat === 'Electricity water fuel') return 'Electricity water fuel';
+  if (cat === 'Site Office small repair') return 'Site Office small repair';
+  if (cat === 'Spot rental equpt') return 'Spot rental equpt';
+  if (cat === 'Site Tools equpt' || cat === 'Online Parts Purchased (Project)') return 'Site Tools equpt';
+  return 'Sundry Consumable'; // Site Food, Project Material, Sundry Consumable, Other
+}
+
+/**
+ * Group expenses by category with POINT-WISE descriptions and date range (Requirement 4)
+ */
+function groupExpensesByCategory(expenses: ExpenseItem[]): { dateRange: string; description: string; jobNo: string; category: string; amount: number }[] {
+  const groups: Record<string, ExpenseItem[]> = {};
+
+  expenses.forEach(item => {
+    const f2Cat = mapToF2Category(item.category);
+    if (!groups[f2Cat]) groups[f2Cat] = [];
+    groups[f2Cat].push(item);
+  });
+
+  const result = [];
+
+  for (const [cat, items] of Object.entries(groups)) {
+    if (items.length === 0) continue;
+
+    // Date range from earliest to latest
+    const dates = items.map(i => i.date).sort();
+    const minDate = dates[0];
+    const maxDate = dates[dates.length - 1];
+    const dateRange = minDate === maxDate ? minDate : `${minDate} to ${maxDate}`;
+
+    // Point-wise description (no + sign) e.g. "1. Site Fuel (6 Visit); 2. Petrol Fill-up"
+    const descriptionsPointWise = items.map((i, idx) => `${idx + 1}. ${i.description}`).join('; ');
+
+    // Unique Job numbers
+    const jobNos = Array.from(new Set(items.map(i => i.jobNo).filter(j => j && j !== '-'))).join(', ') || '-';
+
+    // Sum total
+    const totalAmount = items.reduce((s, i) => s + i.amount, 0);
+
+    result.push({
+      dateRange,
+      description: descriptionsPointWise,
+      jobNo: jobNos,
+      category: cat,
+      amount: totalAmount
+    });
+  }
+
+  return result;
+}
+
+/**
  * Generates the Compiled Bills PDF attached with original bill photos
  */
 export async function generateCompiledBillsPdf(
@@ -420,7 +483,7 @@ export async function generateCompiledBillsPdf(
     doc.setFont('helvetica', 'bold');
     doc.text(`Amount:`, 14, 35);
     doc.setFont('helvetica', 'bold');
-    doc.setTextColor(0, 102, 255);
+    doc.setTextColor(0, 163, 224);
     doc.text(`SAR ${item.amount.toFixed(2)}`, 28, 35);
 
     doc.setTextColor(0, 0, 0);
