@@ -7,7 +7,7 @@ import { ExpenseFormModal } from './components/ExpenseFormModal';
 import { F2PdfPreviewModal } from './components/F2PdfPreviewModal';
 import { OutlookModal } from './components/OutlookModal';
 import { HistoryDrawer } from './components/HistoryDrawer';
-import { Plus, Send, FileText, Sparkles, Building2, UserCheck, Calendar } from 'lucide-react';
+import { Plus, Send, FileText, Sparkles, Building2, UserCheck, Calendar, Edit3 } from 'lucide-react';
 
 const INITIAL_HEADER_INFO: CompanyHeaderInfo = {
   companyName: 'HADAF AL AIMS TRADING CO.',
@@ -16,35 +16,35 @@ const INITIAL_HEADER_INFO: CompanyHeaderInfo = {
   badgeNo: 'xx',
   placeSite: 'KSA',
   currency: 'SAR',
-  expenseTypeSummary: 'Sundry Expenses August 2026',
+  expenseTypeSummary: 'Sundry expenses April, May, June 2026',
   approverName: 'Leela Venkat',
-  dateSubmitted: new Date().toISOString().split('T')[0],
+  dateSubmitted: '2026-06-27',
   advanceFromCompany: 0,
   previousBalance: 0,
   cashInHand: 0
 };
 
-// Initial prefilled sample items matching past F2 form submissions
+// Prefilled active June 2026 expense draft matching Shoeb_SUNDRY EXPENSES_ 27- June 26.xlsx
 const INITIAL_EXPENSES: ExpenseItem[] = [
   {
     id: 'exp-1',
-    date: '2026-08-01',
-    description: 'Site Fuel - FGP (6 Visit)',
+    date: '2026-06-27',
+    description: 'Site Fuel -FGP (6 Visit)',
     jobNo: '12918',
     category: 'Electricity water fuel',
     amount: 430.50
   },
   {
     id: 'exp-2',
-    date: '2026-08-03',
-    description: 'Site Food - FGP (6 Visit) - 5 Person',
+    date: '2026-06-27',
+    description: 'Site Food-FGP (6 Visit)-5 Person',
     jobNo: '12918',
     category: 'Sundry Consumable',
     amount: 508.00
   },
   {
     id: 'exp-3',
-    date: '2026-08-05',
+    date: '2026-06-27',
     description: 'AI Subscription Bills',
     jobNo: '-',
     category: 'Sundry Consumable',
@@ -52,7 +52,7 @@ const INITIAL_EXPENSES: ExpenseItem[] = [
   },
   {
     id: 'exp-4',
-    date: '2026-08-06',
+    date: '2026-06-27',
     description: 'Material (Special cable)',
     jobNo: '12918',
     category: 'Site Tools equpt',
@@ -63,6 +63,7 @@ const INITIAL_EXPENSES: ExpenseItem[] = [
 export default function App() {
   const [headerInfo, setHeaderInfo] = useState<CompanyHeaderInfo>(INITIAL_HEADER_INFO);
   const [expenses, setExpenses] = useState<ExpenseItem[]>(INITIAL_EXPENSES);
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
 
   // Modals state
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -125,59 +126,109 @@ export default function App() {
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
             
             {/* Header Info Details */}
-            <div className="space-y-3">
-              <div className="flex items-center space-x-2">
+            <div className="space-y-3 flex-1">
+              <div className="flex flex-wrap items-center gap-3">
                 <span className="px-2.5 py-1 rounded-md bg-blue-500/10 border border-blue-500/20 text-blue-400 text-xs font-bold uppercase tracking-wider">
-                  Company F2 Form Report
+                  Company F2 Form Draft
                 </span>
-                <span className="text-xs text-slate-400 flex items-center gap-1">
-                  <Calendar className="w-3.5 h-3.5 text-slate-500" />
-                  Submitted Date:
+
+                <div className="flex items-center text-xs text-slate-400 bg-slate-800/80 px-2.5 py-1 rounded-md border border-slate-700">
+                  <Calendar className="w-3.5 h-3.5 text-slate-400 mr-1.5" />
+                  <span className="text-slate-400 mr-1 font-medium">Expense Date:</span>
                   <input
                     type="date"
                     value={headerInfo.dateSubmitted}
                     onChange={(e) => handleUpdateHeaderInfo({ dateSubmitted: e.target.value })}
-                    className="bg-slate-800 border border-slate-700 text-slate-200 text-xs px-2 py-0.5 rounded ml-1 focus:outline-none"
+                    className="bg-slate-900 border border-slate-700 text-slate-200 text-xs font-semibold px-2 py-0.5 rounded focus:outline-none focus:border-blue-500"
                   />
-                </span>
+                </div>
               </div>
 
-              <h2 className="text-xl sm:text-2xl font-extrabold text-slate-100 tracking-tight">
-                {headerInfo.expenseTypeSummary}
-              </h2>
+              {/* Editable Report Title / Period */}
+              <div className="group relative max-w-2xl">
+                {isEditingTitle ? (
+                  <input
+                    type="text"
+                    autoFocus
+                    value={headerInfo.expenseTypeSummary}
+                    onChange={(e) => handleUpdateHeaderInfo({ expenseTypeSummary: e.target.value })}
+                    onBlur={() => setIsEditingTitle(false)}
+                    onKeyDown={(e) => e.key === 'Enter' && setIsEditingTitle(false)}
+                    className="w-full text-xl sm:text-2xl font-extrabold text-white bg-slate-900 border border-blue-500 rounded-lg px-3 py-1 focus:outline-none"
+                  />
+                ) : (
+                  <div
+                    onClick={() => setIsEditingTitle(true)}
+                    className="flex items-center space-x-2 cursor-pointer hover:bg-slate-800/50 p-1.5 rounded-lg -ml-1.5 transition"
+                    title="Click to edit expense period description"
+                  >
+                    <h2 className="text-xl sm:text-2xl font-extrabold text-slate-100 tracking-tight">
+                      {headerInfo.expenseTypeSummary}
+                    </h2>
+                    <Edit3 className="w-4 h-4 text-blue-400 opacity-60 group-hover:opacity-100 transition" />
+                  </div>
+                )}
+              </div>
 
+              {/* Editable Metadata Fields */}
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs text-slate-300 pt-1">
-                <div className="flex items-center space-x-2">
+                
+                {/* Employee Name */}
+                <div className="flex items-center space-x-2 bg-slate-900/60 p-2 rounded-lg border border-slate-800">
                   <Building2 className="w-4 h-4 text-blue-400 shrink-0" />
-                  <div>
-                    <span className="text-slate-500 block text-[10px]">EMPLOYEE / SITE</span>
-                    <span className="font-semibold">{headerInfo.employeeName} ({headerInfo.placeSite})</span>
+                  <div className="min-w-0 flex-1">
+                    <span className="text-slate-500 block text-[10px] uppercase font-semibold">Employee</span>
+                    <input
+                      type="text"
+                      value={headerInfo.employeeName}
+                      onChange={(e) => handleUpdateHeaderInfo({ employeeName: e.target.value })}
+                      className="bg-transparent font-semibold text-slate-200 w-full focus:outline-none border-b border-transparent hover:border-slate-600 focus:border-blue-500"
+                    />
                   </div>
                 </div>
 
-                <div className="flex items-center space-x-2">
-                  <UserCheck className="w-4 h-4 text-emerald-400 shrink-0" />
-                  <div>
-                    <span className="text-slate-500 block text-[10px]">APPROVER</span>
-                    <span className="font-semibold">{headerInfo.approverName}</span>
-                  </div>
-                </div>
-
-                <div className="flex items-center space-x-2">
-                  <FileText className="w-4 h-4 text-purple-400 shrink-0" />
-                  <div>
-                    <span className="text-slate-500 block text-[10px]">ATTACHMENTS</span>
-                    <span className="font-semibold">{expenses.filter(e => e.receiptImage).length} Bill Photos</span>
-                  </div>
-                </div>
-
-                <div className="flex items-center space-x-2">
+                {/* Site / Location */}
+                <div className="flex items-center space-x-2 bg-slate-900/60 p-2 rounded-lg border border-slate-800">
                   <Sparkles className="w-4 h-4 text-amber-400 shrink-0" />
-                  <div>
-                    <span className="text-slate-500 block text-[10px]">CURRENCY</span>
-                    <span className="font-semibold">{headerInfo.currency} (Saudi Riyals)</span>
+                  <div className="min-w-0 flex-1">
+                    <span className="text-slate-500 block text-[10px] uppercase font-semibold">Place / Site</span>
+                    <input
+                      type="text"
+                      value={headerInfo.placeSite}
+                      onChange={(e) => handleUpdateHeaderInfo({ placeSite: e.target.value })}
+                      className="bg-transparent font-semibold text-slate-200 w-full focus:outline-none border-b border-transparent hover:border-slate-600 focus:border-blue-500"
+                    />
                   </div>
                 </div>
+
+                {/* Approver Name */}
+                <div className="flex items-center space-x-2 bg-slate-900/60 p-2 rounded-lg border border-slate-800">
+                  <UserCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <span className="text-slate-500 block text-[10px] uppercase font-semibold">Approver</span>
+                    <input
+                      type="text"
+                      value={headerInfo.approverName}
+                      onChange={(e) => handleUpdateHeaderInfo({ approverName: e.target.value })}
+                      className="bg-transparent font-semibold text-slate-200 w-full focus:outline-none border-b border-transparent hover:border-slate-600 focus:border-blue-500"
+                    />
+                  </div>
+                </div>
+
+                {/* Currency */}
+                <div className="flex items-center space-x-2 bg-slate-900/60 p-2 rounded-lg border border-slate-800">
+                  <FileText className="w-4 h-4 text-purple-400 shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <span className="text-slate-500 block text-[10px] uppercase font-semibold">Currency</span>
+                    <input
+                      type="text"
+                      value={headerInfo.currency}
+                      onChange={(e) => handleUpdateHeaderInfo({ currency: e.target.value })}
+                      className="bg-transparent font-semibold text-slate-200 w-full focus:outline-none border-b border-transparent hover:border-slate-600 focus:border-blue-500"
+                    />
+                  </div>
+                </div>
+
               </div>
             </div>
 
