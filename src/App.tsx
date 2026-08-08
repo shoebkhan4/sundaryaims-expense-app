@@ -61,9 +61,26 @@ const INITIAL_EXPENSES: ExpenseItem[] = [
 ];
 
 export default function App() {
-  const [headerInfo, setHeaderInfo] = useState<CompanyHeaderInfo>(INITIAL_HEADER_INFO);
-  const [expenses, setExpenses] = useState<ExpenseItem[]>(INITIAL_EXPENSES);
+  const [headerInfo, setHeaderInfo] = useState<CompanyHeaderInfo>(() => {
+    const saved = localStorage.getItem('aims_header_info');
+    return saved ? JSON.parse(saved) : INITIAL_HEADER_INFO;
+  });
+
+  const [expenses, setExpenses] = useState<ExpenseItem[]>(() => {
+    const saved = localStorage.getItem('aims_expenses');
+    return saved ? JSON.parse(saved) : INITIAL_EXPENSES;
+  });
+
   const [isEditingTitle, setIsEditingTitle] = useState(false);
+
+  // Save to localStorage on change
+  React.useEffect(() => {
+    localStorage.setItem('aims_header_info', JSON.stringify(headerInfo));
+  }, [headerInfo]);
+
+  React.useEffect(() => {
+    localStorage.setItem('aims_expenses', JSON.stringify(expenses));
+  }, [expenses]);
 
   // Modals state
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
