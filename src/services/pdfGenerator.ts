@@ -1,6 +1,6 @@
 import jsPDF from 'jspdf';
 import { CompanyHeaderInfo, ExpenseItem } from '../types/expense';
-import { AIMS_LOGO_BASE64, LEELA_SIGNATURE_BASE64, SAMPLE_RECEIPT_BASE64 } from '../assets/images';
+import { AIMS_LOGO_BASE64, SHOEB_SIGNATURE_BASE64, LEELA_SIGNATURE_BASE64, SAMPLE_RECEIPT_BASE64 } from '../assets/images';
 
 export async function generateF2SummaryPdf(
   headerInfo: CompanyHeaderInfo,
@@ -157,7 +157,7 @@ export async function generateF2SummaryPdf(
   y += 10;
 
   // -------------------------------------------------------------
-  // 4. TABLE ROWS (Grid lines with 22 rows like Excel)
+  // 4. TABLE ROWS (Grid lines with 18 empty row lines like Excel)
   // -------------------------------------------------------------
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(7.5);
@@ -170,7 +170,7 @@ export async function generateF2SummaryPdf(
     'Sundry Consumable': 0
   };
 
-  const totalGridRows = 18; // Draws empty row lines like original F2 form sheet
+  const totalGridRows = 18;
 
   for (let r = 0; r < totalGridRows; r++) {
     const item = expenses[r];
@@ -240,7 +240,6 @@ export async function generateF2SummaryPdf(
   // -------------------------------------------------------------
   // 5. SUMMARY & FOR FINANCE USE ONLY BOX
   // -------------------------------------------------------------
-  // For Finance Use Only Row
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(8);
   
@@ -297,11 +296,11 @@ export async function generateF2SummaryPdf(
   y += 7;
 
   // -------------------------------------------------------------
-  // 6. EXACT SIGNATURES SECTION (With Original Blue Hand Signature)
+  // 6. BOTH SIGNATURES (SHOEB SIGNATURE & LEELA SIGNATURE OVERLAYS)
   // -------------------------------------------------------------
   const sigColW = (pageWidth - margin * 2) / 3; // ~92mm each
 
-  // Box 1: Employee
+  // Box 1: Employee (Shoeb Ali Khan + Original Blue Shoeb Signature Overlay)
   doc.rect(margin, y, sigColW, 14);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(8);
@@ -317,7 +316,14 @@ export async function generateF2SummaryPdf(
   doc.setFont('helvetica', 'bold');
   doc.text('Signature:', margin + 2, y + 12);
 
-  // Box 2: Approver (With Original Blue Leela Signature Image)
+  // Render Original Blue Shoeb Hand Signature Overlay
+  try {
+    doc.addImage(SHOEB_SIGNATURE_BASE64, 'PNG', margin + 22, y + 5.5, 28, 7.5);
+  } catch (e) {
+    console.error('Error rendering Shoeb signature:', e);
+  }
+
+  // Box 2: Approver (Leela Venkat + Original Blue Leela Signature Overlay)
   const appX = margin + sigColW;
   doc.rect(appX, y, sigColW, 14);
   doc.setFont('helvetica', 'bold');
@@ -335,9 +341,9 @@ export async function generateF2SummaryPdf(
 
   // Render Original Blue Leela Hand Signature Overlay
   try {
-    doc.addImage(LEELA_SIGNATURE_BASE64, 'JPEG', appX + 28, y + 5, 24, 8);
+    doc.addImage(LEELA_SIGNATURE_BASE64, 'PNG', appX + 26, y + 5.5, 28, 7.5);
   } catch (e) {
-    console.error('Error rendering signature:', e);
+    console.error('Error rendering Leela signature:', e);
   }
 
   // Box 3: Cost Controller
