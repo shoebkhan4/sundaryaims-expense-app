@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { X, Camera, Sparkles, AlertCircle, Check, RefreshCw, FileText, DollarSign, Calculator, RotateCw, Contrast, Crop, Sliders } from 'lucide-react';
+import { X, Camera, Sparkles, AlertCircle, Check, RefreshCw, FileText, DollarSign, Calculator, RotateCw, Contrast, Crop, Image as ImageIcon } from 'lucide-react';
 import { ExpenseCategory, ExpenseItem } from '../types/expense';
 import { scanReceiptImage } from '../services/ocrService';
 
@@ -23,10 +23,87 @@ const CATEGORIES: ExpenseCategory[] = [
 ];
 
 /**
- * Enhanced Mobile Document Scanner Canvas Filter:
- * Converts shadowy mobile photo into a crisp, high-contrast scanned document
+ * Auto-detects receipt paper geometry boundaries (removes dark background/table)
  */
-function applyDocumentScanFilter(dataUrl: string, applyScanFilter = true, rotationDeg = 0): Promise<string> {
+function autoCropBillGeometry(img: HTMLImageElement, canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D, applyScanFilter: boolean) {
+  const w = img.width;
+  const h = img.height;
+  
+  canvas.width = w;
+  canvas.height = h;
+  ctx.drawImage(img, 0, 0, w, h);
+
+  const imgData = ctx.getImageData(0, 0, w, h);
+  const data = imgData.data;
+
+  // Find tight bounding rectangle of receipt paper
+  let minX = w, maxX = 0, minY = h, maxY = 0;
+  let count = 0;
+
+  for (let y = 0; y < h; y += 4) {
+    for (let x = 0; x < w; x += 4) {
+      const idx = (y * w + x) * 4;
+      const r = data[idx];
+      const g = data[idx + 1];
+      const b = data[idx + 2];
+
+      // Light/white receipt paper pixels
+      const isReceiptPaper = (r > 120 && g > 120 && b > 120) || (Math.abs(r - g) < 20 && Math.abs(g - b) < 20 && r > 100);
+      if (isReceiptPaper) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+        count++;
+      }
+    }
+  }
+
+  // If valid receipt geometry detected (at least 15% of image)
+  const cropW = maxX - minX;
+  const cropH = maxY - minY;
+  const isGeometryValid = count > (w * h * 0.1) && cropW > w * 0.3 && cropH > h * 0.3;
+
+  const startX = isGeometryValid ? Math.max(0, minX - 10) : 0;
+  const startY = isGeometryValid ? Math.max(0, minY - 10) : 0;
+  const finalW = isGeometryValid ? Math.min(w - startX, cropW + 20) : w;
+  const finalH = isGeometryValid ? Math.min(h - startY, cropH + 20) : h;
+
+  // Render cropped receipt geometry
+  canvas.width = finalW;
+  canvas.height = finalH;
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, finalW, finalH);
+  ctx.drawImage(img, startX, startY, finalW, finalH, 0, 0, finalW, finalH);
+
+  // Apply Document Scan Filter if requested
+  if (applyScanFilter) {
+    const croppedData = ctx.getImageData(0, 0, finalW, finalH);
+    const d = croppedData.data;
+
+    for (let i = 0; i < d.length; i += 4) {
+      let gray = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+
+      if (gray > 160) {
+        gray = 255;
+      } else if (gray < 90) {
+        gray = 0;
+      } else {
+        gray = (gray - 90) * (255 / (160 - 90));
+      }
+
+      d[i] = gray;
+      d[i + 1] = gray;
+      d[i + 2] = gray;
+    }
+    ctx.putImageData(croppedData, 0, 0);
+  }
+}
+
+/**
+ * Mobile Document Scanner Canvas Filter with Auto Geometry Crop
+ */
+function processDocumentScan(dataUrl: string, applyScanFilter = true, autoCropGeometry = true, rotationDeg = 0): Promise<string> {
   return new Promise((resolve) => {
     const img = new Image();
     img.onload = () => {
@@ -45,50 +122,46 @@ function applyDocumentScanFilter(dataUrl: string, applyScanFilter = true, rotati
       }
 
       const canvas = document.createElement('canvas');
-      const isRotated90 = (rotationDeg / 90) % 2 !== 0;
-      canvas.width = isRotated90 ? h : w;
-      canvas.height = isRotated90 ? w : h;
-
       const ctx = canvas.getContext('2d');
       if (!ctx) return resolve(dataUrl);
 
-      ctx.save();
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      if (autoCropGeometry) {
+        autoCropBillGeometry(img, canvas, ctx, applyScanFilter);
+      } else {
+        const isRotated90 = (rotationDeg / 90) % 2 !== 0;
+        canvas.width = isRotated90 ? h : w;
+        canvas.height = isRotated90 ? w : h;
 
-      // Apply rotation
-      ctx.translate(canvas.width / 2, canvas.height / 2);
-      ctx.rotate((rotationDeg * Math.PI) / 180);
-      ctx.drawImage(img, -w / 2, -h / 2, w, h);
-      ctx.restore();
+        ctx.save();
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      if (applyScanFilter) {
-        // Document Contrast & Sharpness Enhancement
-        const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const d = imgData.data;
+        ctx.translate(canvas.width / 2, canvas.height / 2);
+        ctx.rotate((rotationDeg * Math.PI) / 180);
+        ctx.drawImage(img, -w / 2, -h / 2, w, h);
+        ctx.restore();
 
-        for (let i = 0; i < d.length; i += 4) {
-          const r = d[i];
-          const g = d[i + 1];
-          const b = d[i + 2];
+        if (applyScanFilter) {
+          const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          const d = imgData.data;
 
-          // Grayscale luminance
-          let gray = 0.299 * r + 0.587 * g + 0.114 * b;
+          for (let i = 0; i < d.length; i += 4) {
+            let gray = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
 
-          // High-contrast Document B&W filter thresholding
-          if (gray > 165) {
-            gray = 255; // Clean paper background
-          } else if (gray < 90) {
-            gray = 0;   // Crisp dark text
-          } else {
-            gray = (gray - 90) * (255 / (165 - 90)); // Midtone curve
+            if (gray > 160) {
+              gray = 255;
+            } else if (gray < 90) {
+              gray = 0;
+            } else {
+              gray = (gray - 90) * (255 / (160 - 90));
+            }
+
+            d[i] = gray;
+            d[i + 1] = gray;
+            d[i + 2] = gray;
           }
-
-          d[i] = gray;
-          d[i + 1] = gray;
-          d[i + 2] = gray;
+          ctx.putImageData(imgData, 0, 0);
         }
-        ctx.putImageData(imgData, 0, 0);
       }
 
       resolve(canvas.toDataURL('image/jpeg', 0.8));
@@ -109,7 +182,7 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
   const [jobNo, setJobNo] = useState(initialValues?.jobNo || '12918');
   const [category, setCategory] = useState<ExpenseCategory>(initialValues?.category || 'Electricity water fuel');
   
-  // Currency mode (SAR by default - no USD conversion shown unless USD is selected)
+  // Currency mode (SAR by default)
   const [originalCurrency, setOriginalCurrency] = useState<'SAR' | 'USD'>(initialValues?.originalCurrency || 'SAR');
   const [usdAmount, setUsdAmount] = useState<string>(initialValues?.originalAmount ? String(initialValues.originalAmount) : '');
   const [conversionRate, setConversionRate] = useState<string>(initialValues?.conversionRate ? String(initialValues.conversionRate) : '3.75');
@@ -123,6 +196,7 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
 
   // Scanner controls
   const [isScanFilterActive, setIsScanFilterActive] = useState<boolean>(true);
+  const [isAutoCropActive, setIsAutoCropActive] = useState<boolean>(true);
   const [rotationDeg, setRotationDeg] = useState<number>(0);
 
   // OCR states
@@ -130,7 +204,9 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
   const [ocrDetectedAmount, setOcrDetectedAmount] = useState<number | null>(null);
   const [rawOcrText, setRawOcrText] = useState<string>('');
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  // Separate refs for Camera vs File Gallery upload
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const galleryInputRef = useRef<HTMLInputElement>(null);
 
   // Auto calculate SAR amount ONLY when in USD mode
   useEffect(() => {
@@ -176,18 +252,17 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
         const rawDataUrl = event.target?.result as string;
         setRawUploadedImage(rawDataUrl);
 
-        // Apply Document Scanner Filter (High Contrast B&W Document Filter)
-        const scannedDataUrl = await applyDocumentScanFilter(rawDataUrl, true, 0);
+        // Apply Document Geometry Auto Crop & High Contrast Filter
+        const scannedDataUrl = await processDocumentScan(rawDataUrl, true, true, 0);
         setReceiptImage(scannedDataUrl);
 
-        // Run OCR with Arabic & English support
+        // Run OCR with Arabic (ر.س / المجموع / ٠-٩) & English support
         setIsScanning(true);
         const ocrResult = await scanReceiptImage(scannedDataUrl);
         setIsScanning(false);
 
         if (ocrResult.rawText) setRawOcrText(ocrResult.rawText);
 
-        // Auto currency hint detection (Defaults to SAR unless USD is explicitly detected)
         if (ocrResult.currencyHint === 'USD') {
           setOriginalCurrency('USD');
           if (ocrResult.amount !== undefined) {
@@ -195,7 +270,7 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
             setSarAmount((ocrResult.amount * 3.75).toFixed(2));
           }
         } else {
-          setOriginalCurrency('SAR'); // SAR by default
+          setOriginalCurrency('SAR'); // Default SAR
           if (ocrResult.amount !== undefined) {
             setOcrDetectedAmount(ocrResult.amount);
             setSarAmount(String(ocrResult.amount));
@@ -219,12 +294,12 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
     }
   };
 
-  // Re-apply rotation or scanner filter on uploaded image
-  const handleToggleScanFilter = async (filterOn: boolean, rot: number) => {
+  const handleUpdateScanSettings = async (filterOn: boolean, autoCrop: boolean, rot: number) => {
     if (!rawUploadedImage) return;
     setIsScanFilterActive(filterOn);
+    setIsAutoCropActive(autoCrop);
     setRotationDeg(rot);
-    const updated = await applyDocumentScanFilter(rawUploadedImage, filterOn, rot);
+    const updated = await processDocumentScan(rawUploadedImage, filterOn, autoCrop, rot);
     setReceiptImage(updated);
   };
 
@@ -280,31 +355,45 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
 
           {/* DOCUMENT SCANNER UPLOAD ZONE */}
           <div>
-            <div className="flex items-center justify-between mb-1.5">
+            <div className="flex items-center justify-between mb-2">
               <label className="text-xs font-bold uppercase tracking-wider text-slate-300">
-                Bill / Receipt Document Scanner
+                Bill / Receipt Attachment
               </label>
 
-              {/* Document Scan Filter & Rotation Controls */}
+              {/* Document Scanner Controls */}
               {receiptImage && !isPdfFile && (
-                <div className="flex items-center space-x-2">
+                <div className="flex items-center space-x-1.5">
                   <button
                     type="button"
-                    onClick={() => handleToggleScanFilter(!isScanFilterActive, rotationDeg)}
+                    onClick={() => handleUpdateScanSettings(!isScanFilterActive, isAutoCropActive, rotationDeg)}
                     className={`px-2 py-0.5 rounded text-[11px] font-semibold border flex items-center gap-1 transition ${
                       isScanFilterActive
                         ? 'bg-cyan-500/20 border-cyan-500/40 text-cyan-300'
                         : 'bg-slate-800 border-slate-700 text-slate-400'
                     }`}
-                    title="Toggle B&W Document Scanner Contrast Filter"
+                    title="Toggle Scan Contrast Filter"
                   >
                     <Contrast className="w-3 h-3" />
-                    <span>Scan Filter</span>
+                    <span>Filter</span>
                   </button>
 
                   <button
                     type="button"
-                    onClick={() => handleToggleScanFilter(isScanFilterActive, (rotationDeg + 90) % 360)}
+                    onClick={() => handleUpdateScanSettings(isScanFilterActive, !isAutoCropActive, rotationDeg)}
+                    className={`px-2 py-0.5 rounded text-[11px] font-semibold border flex items-center gap-1 transition ${
+                      isAutoCropActive
+                        ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
+                        : 'bg-slate-800 border-slate-700 text-slate-400'
+                    }`}
+                    title="Toggle Auto Geometry Edge Crop"
+                  >
+                    <Crop className="w-3 h-3" />
+                    <span>Auto Geometry</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleUpdateScanSettings(isScanFilterActive, isAutoCropActive, (rotationDeg + 90) % 360)}
                     className="p-1 rounded bg-slate-800 border border-slate-700 text-slate-300 hover:text-cyan-400 transition"
                     title="Rotate Photo 90°"
                   >
@@ -314,25 +403,52 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
               )}
             </div>
 
+            {/* Hidden Input Ref 1: Mobile Camera Capture */}
             <input
               type="file"
-              ref={fileInputRef}
-              accept="image/*,application/pdf"
+              ref={cameraInputRef}
+              accept="image/*"
               capture="environment"
               onChange={handleFileSelect}
               className="hidden"
             />
 
+            {/* Hidden Input Ref 2: Mobile Photo Gallery / Files Upload */}
+            <input
+              type="file"
+              ref={galleryInputRef}
+              accept="image/*,application/pdf"
+              onChange={handleFileSelect}
+              className="hidden"
+            />
+
             {!receiptImage && !receiptFileName ? (
-              <div
-                onClick={() => fileInputRef.current?.click()}
-                className="border-2 border-dashed border-slate-700 hover:border-[#00A3E0] rounded-xl p-5 flex flex-col items-center justify-center cursor-pointer bg-slate-800/40 hover:bg-slate-800/80 transition text-center group"
-              >
-                <div className="w-12 h-12 rounded-full bg-[#00A3E0]/10 group-hover:bg-[#00A3E0]/20 text-[#00A3E0] flex items-center justify-center mb-2 transition">
-                  <Camera className="w-6 h-6" />
+              <div className="grid grid-cols-2 gap-3">
+                
+                {/* 1. Camera Trigger */}
+                <div
+                  onClick={() => cameraInputRef.current?.click()}
+                  className="border-2 border-dashed border-slate-700 hover:border-[#00A3E0] rounded-xl p-4 flex flex-col items-center justify-center cursor-pointer bg-slate-800/40 hover:bg-slate-800/80 transition text-center group"
+                >
+                  <div className="w-10 h-10 rounded-full bg-[#00A3E0]/10 group-hover:bg-[#00A3E0]/20 text-[#00A3E0] flex items-center justify-center mb-1.5 transition">
+                    <Camera className="w-5 h-5" />
+                  </div>
+                  <span className="text-xs font-bold text-slate-200">Take Photo</span>
+                  <span className="text-[10px] text-slate-400 mt-0.5">Use Phone Camera</span>
                 </div>
-                <span className="text-xs sm:text-sm font-bold text-slate-200">Scan Bill Photo or Upload PDF Receipt</span>
-                <span className="text-[11px] text-slate-400 mt-1">Auto-detects Arabic (المجموع/ر.س) & English totals</span>
+
+                {/* 2. File / Gallery Upload Trigger */}
+                <div
+                  onClick={() => galleryInputRef.current?.click()}
+                  className="border-2 border-dashed border-slate-700 hover:border-emerald-500 rounded-xl p-4 flex flex-col items-center justify-center cursor-pointer bg-slate-800/40 hover:bg-slate-800/80 transition text-center group"
+                >
+                  <div className="w-10 h-10 rounded-full bg-emerald-500/10 group-hover:bg-emerald-500/20 text-emerald-400 flex items-center justify-center mb-1.5 transition">
+                    <ImageIcon className="w-5 h-5" />
+                  </div>
+                  <span className="text-xs font-bold text-slate-200">Choose File / PDF</span>
+                  <span className="text-[10px] text-slate-400 mt-0.5">Photos & PDF Bills</span>
+                </div>
+
               </div>
             ) : (
               <div className="relative rounded-xl border border-slate-700 bg-slate-850 overflow-hidden p-3 flex items-center space-x-3">
@@ -370,13 +486,23 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                     </div>
                   )}
 
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    className="mt-1 text-xs text-cyan-400 hover:underline inline-block font-medium"
-                  >
-                    Replace Photo / Document
-                  </button>
+                  <div className="flex items-center space-x-3 mt-1 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => cameraInputRef.current?.click()}
+                      className="text-cyan-400 hover:underline font-medium"
+                    >
+                      Camera Photo
+                    </button>
+                    <span className="text-slate-600">|</span>
+                    <button
+                      type="button"
+                      onClick={() => galleryInputRef.current?.click()}
+                      className="text-emerald-400 hover:underline font-medium"
+                    >
+                      Gallery File
+                    </button>
+                  </div>
                 </div>
 
                 <button
@@ -461,7 +587,7 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
             </select>
           </div>
 
-          {/* CLEAN AMOUNT INPUT (SAR by default - No USD conversion clutter unless USD is selected) */}
+          {/* CLEAN AMOUNT INPUT (SAR by default) */}
           {originalCurrency === 'SAR' ? (
             <div>
               <div className="flex items-center justify-between mb-1">
@@ -469,7 +595,6 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                   Amount in SAR (Saudi Riyals) <span className="text-rose-400">*</span>
                 </label>
                 
-                {/* Toggle to switch to USD ONLY if needed */}
                 <button
                   type="button"
                   onClick={() => setOriginalCurrency('USD')}
@@ -494,7 +619,7 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
               </div>
             </div>
           ) : (
-            /* USD CONVERSION BOX - Displayed ONLY when USD currency is selected */
+            /* USD CONVERSION BOX */
             <div className="bg-slate-950 p-4 rounded-xl border border-amber-500/40 space-y-3">
               <div className="flex items-center justify-between">
                 <label className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
@@ -512,7 +637,6 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
               </div>
 
               <div className="grid grid-cols-2 gap-3 pt-1">
-                {/* USD Bill Amount */}
                 <div>
                   <label className="block text-[11px] font-semibold text-amber-300 mb-1">
                     USD Bill Amount ($) <span className="text-rose-400">*</span>
@@ -531,7 +655,6 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                   </div>
                 </div>
 
-                {/* Conversion Rate */}
                 <div>
                   <label className="block text-[11px] font-semibold text-slate-300 mb-1">
                     Conversion Rate (SAR/USD)
@@ -551,7 +674,6 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                 </div>
               </div>
 
-              {/* Calculated SAR Equivalent */}
               <div className="flex items-center justify-between bg-slate-900 p-2.5 rounded-lg border border-emerald-500/30">
                 <span className="text-xs text-slate-300 font-medium">Calculated Equivalent in SAR:</span>
                 <span className="text-sm font-black text-emerald-400">

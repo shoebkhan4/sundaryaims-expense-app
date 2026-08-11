@@ -12,18 +12,24 @@ export interface OcrResult {
 }
 
 /**
- * Converts Arabic-Indic numerals (٠١٢٣٤٥٦٧٨٩) to standard digits (0123456789)
+ * Converts Arabic-Indic numerals (٠١٢٣٤٥٦٧٨٩) and Persian numerals to standard digits (0123456789)
  */
 function normalizeArabicNumerals(str: string): string {
   const arabicDigits = ['٠', '١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩'];
-  return str.replace(/[٠-٩]/g, w => String(arabicDigits.indexOf(w)));
+  const persianDigits = ['۰', '۱', '۲', '۳', '۴', '۵', '۶', '۷', '۸', '۹'];
+  
+  let res = str;
+  for (let i = 0; i < 10; i++) {
+    res = res.replace(new RegExp(arabicDigits[i], 'g'), String(i));
+    res = res.replace(new RegExp(persianDigits[i], 'g'), String(i));
+  }
+  return res;
 }
 
 export async function scanReceiptImage(imageSrc: string | File): Promise<OcrResult> {
   try {
     const imageUrl = typeof imageSrc === 'string' ? imageSrc : URL.createObjectURL(imageSrc);
     
-    // Initialize Tesseract worker with English + Arabic support
     let text = '';
     let confidence = 0;
 
@@ -34,7 +40,6 @@ export async function scanReceiptImage(imageSrc: string | File): Promise<OcrResu
       text = data.text || '';
       confidence = data.confidence || 0;
     } catch {
-      // Fallback to eng worker if eng+ara takes long or fails
       const worker = await createWorker('eng');
       const { data } = await worker.recognize(imageUrl);
       await worker.terminate();
@@ -48,7 +53,7 @@ export async function scanReceiptImage(imageSrc: string | File): Promise<OcrResu
     const isUsd = normalizedText.includes('$') || normalizedText.toLowerCase().includes('usd') || normalizedText.toLowerCase().includes('dollar');
     const currencyHint: 'SAR' | 'USD' = isUsd ? 'USD' : 'SAR';
 
-    const parsedAmount = extractTotalAmount(normalizedText);
+    const parsedAmount = extractArabicSarTotalAmount(normalizedText);
     const parsedCategory = autoDetectCategory(normalizedText);
     const parsedDate = extractDate(normalizedText);
     const parsedVendor = extractVendor(normalizedText);
@@ -73,28 +78,44 @@ export async function scanReceiptImage(imageSrc: string | File): Promise<OcrResu
 }
 
 /**
- * Extracts numeric totals handling both Arabic (المجموع, المبلغ, إجمالي, ر.س) and English (TOTAL, SAR, etc.)
+ * Robust extraction of SAR amounts from Saudi Arabic & English receipts
  */
-function extractTotalAmount(text: string): number | undefined {
-  const lines = text.split('\n');
+function extractArabicSarTotalAmount(text: string): number | undefined {
+  const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
   
-  // English & Arabic Total keywords
-  const totalRegex = /(?:TOTAL|GRAND TOTAL|NET|AMOUNT|SAR|SR|RIYAL|SUM|المجموع|المبلغ|إجمالي|الاجمالي|الصافي|صافي|ر\.س|ريال)\s*[:=]?\s*([A-Z]*\s*)?([\d,]+\.?\d*)/i;
-  
-  // Search from bottom up as totals are usually near bottom of receipts
+  // 1. High-priority Arabic & English Total Patterns
+  const totalKeywordsRegex = /(?:المجموع\s*الإجمالي|المجموع\s*الكلي|المجموع|الإجمالي|المبلغ\s*المستحق|إجمالي\s*الفاتورة|إجمالي\s*المبلغ|المبلغ|صافي|الصافي|TOTAL|GRAND\s*TOTAL|NET\s*AMOUNT|AMOUNT|SAR|SR|RIYAL|ر\.س|ريال)/i;
+
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i];
-    const match = line.match(totalRegex);
-    if (match && match[2]) {
-      const val = parseFloat(match[2].replace(',', ''));
+    if (totalKeywordsRegex.test(line)) {
+      // Find all numbers with decimals or integers in this line or nearby lines
+      const nums = line.match(/\b\d+(?:[\.,]\d{1,2})?\b/g);
+      if (nums && nums.length > 0) {
+        // Parse numbers from line
+        const parsed = nums.map(n => parseFloat(n.replace(',', '.'))).filter(v => !isNaN(v) && v > 0 && v < 500000);
+        if (parsed.length > 0) {
+          // Return the largest number found on total line
+          return Math.max(...parsed);
+        }
+      }
+    }
+  }
+
+  // 2. Search numbers attached to "ر.س" or "SAR" or "ريال" anywhere in text
+  const currencyMatch = text.match(/(?:ر\.س|ريال|SAR|SR)\s*[:=]?\s*(\d+(?:[\.,]\d{1,2})?)|(\d+(?:[\.,]\d{1,2})?)\s*(?:ر\.s|ريال|SAR|SR)/i);
+  if (currencyMatch) {
+    const valStr = currencyMatch[1] || currencyMatch[2];
+    if (valStr) {
+      const val = parseFloat(valStr.replace(',', '.'));
       if (!isNaN(val) && val > 0) return val;
     }
   }
 
-  // Fallback: search any number with decimal places or largest valid number
-  const numbers = text.match(/\b\d{1,5}(?:\.\d{1,2})\b/g);
+  // 3. Fallback: Find largest valid monetary decimal number in receipt
+  const numbers = text.match(/\b\d{1,5}[\.,]\d{2}\b/g);
   if (numbers && numbers.length > 0) {
-    const floatVals = numbers.map(n => parseFloat(n)).filter(v => !isNaN(v) && v > 0 && v < 100000);
+    const floatVals = numbers.map(n => parseFloat(n.replace(',', '.'))).filter(v => !isNaN(v) && v > 0 && v < 200000);
     if (floatVals.length > 0) {
       return Math.max(...floatVals);
     }
@@ -109,7 +130,6 @@ function extractTotalAmount(text: string): number | undefined {
 function autoDetectCategory(text: string): ExpenseCategory {
   const lower = text.toLowerCase();
   
-  // Fuel & Utilities (وقود / بنزين / محطة / كهرباء / ماء / ديزل)
   if (
     lower.includes('fuel') || lower.includes('gas') || lower.includes('petrol') || lower.includes('water') || lower.includes('electricity') || lower.includes('fgp') ||
     lower.includes('وقود') || lower.includes('بنزين') || lower.includes('محطة') || lower.includes('كهرباء') || lower.includes('ماء') || lower.includes('ديزل')
@@ -117,7 +137,6 @@ function autoDetectCategory(text: string): ExpenseCategory {
     return 'Electricity water fuel';
   }
 
-  // Site Food (طعام / مطعم / وجبة / سوبرماركت / تموينات)
   if (
     lower.includes('food') || lower.includes('meal') || lower.includes('restaurant') || lower.includes('cafe') || lower.includes('grocery') ||
     lower.includes('طعام') || lower.includes('مطعم') || lower.includes('وجبة') || lower.includes('سوبرماركت') || lower.includes('تموينات') || lower.includes('بقال')
@@ -125,12 +144,10 @@ function autoDetectCategory(text: string): ExpenseCategory {
     return 'Site Food';
   }
 
-  // Project Material & Online Parts
   if (lower.includes('material') || lower.includes('parts') || lower.includes('aliexpress') || lower.includes('amazon') || lower.includes('قطع') || lower.includes('مواد')) {
     return lower.includes('online') || lower.includes('aliexpress') || lower.includes('amazon') ? 'Online Parts Purchased (Project)' : 'Project Material';
   }
 
-  // Office Repair (صيانة / تصليح / إلاح / ورشة)
   if (
     lower.includes('repair') || lower.includes('maintenance') || lower.includes('fix') || lower.includes('plumbing') ||
     lower.includes('صيانة') || lower.includes('تصليح') || lower.includes('إصلاح') || lower.includes('ورشة')
@@ -138,7 +155,6 @@ function autoDetectCategory(text: string): ExpenseCategory {
     return 'Site Office small repair';
   }
 
-  // Spot rental (تأجير / إيجار / رافعة)
   if (
     lower.includes('rental') || lower.includes('spot') || lower.includes('rent') || lower.includes('crane') || lower.includes('vehicle') ||
     lower.includes('تأجير') || lower.includes('إيجار') || lower.includes('رافعة')
@@ -146,7 +162,6 @@ function autoDetectCategory(text: string): ExpenseCategory {
     return 'Spot rental equpt';
   }
 
-  // Site Tools (أدوات / عد ه / كيبل)
   if (
     lower.includes('tool') || lower.includes('hardware') || lower.includes('cable') || lower.includes('drill') || lower.includes('equipment') ||
     lower.includes('أدوات') || lower.includes('عدة') || lower.includes('كيبل')
