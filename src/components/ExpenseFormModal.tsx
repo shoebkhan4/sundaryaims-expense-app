@@ -1,7 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { X, Camera, Sparkles, AlertCircle, Check, RefreshCw, FileText, DollarSign, Calculator, RotateCw, Contrast, Crop, Image as ImageIcon } from 'lucide-react';
+import { X, Sparkles, Check, RefreshCw, FileText, DollarSign, Calculator, Crop, ScanLine, Image as ImageIcon } from 'lucide-react';
 import { ExpenseCategory, ExpenseItem } from '../types/expense';
 import { scanReceiptImage } from '../services/ocrService';
+import { autoScanImage, EnhanceMode, Quad } from '../services/documentScanner';
+import { CameraScannerModal } from './CameraScannerModal';
+import { DocumentCropEditor } from './DocumentCropEditor';
 
 interface ExpenseFormModalProps {
   isOpen: boolean;
@@ -21,155 +24,6 @@ const CATEGORIES: ExpenseCategory[] = [
   'Sundry Consumable',
   'Other'
 ];
-
-/**
- * Auto-detects receipt paper geometry boundaries (removes dark background/table)
- */
-function autoCropBillGeometry(img: HTMLImageElement, canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D, applyScanFilter: boolean) {
-  const w = img.width;
-  const h = img.height;
-  
-  canvas.width = w;
-  canvas.height = h;
-  ctx.drawImage(img, 0, 0, w, h);
-
-  const imgData = ctx.getImageData(0, 0, w, h);
-  const data = imgData.data;
-
-  // Find tight bounding rectangle of receipt paper
-  let minX = w, maxX = 0, minY = h, maxY = 0;
-  let count = 0;
-
-  for (let y = 0; y < h; y += 4) {
-    for (let x = 0; x < w; x += 4) {
-      const idx = (y * w + x) * 4;
-      const r = data[idx];
-      const g = data[idx + 1];
-      const b = data[idx + 2];
-
-      // Light/white receipt paper pixels
-      const isReceiptPaper = (r > 120 && g > 120 && b > 120) || (Math.abs(r - g) < 20 && Math.abs(g - b) < 20 && r > 100);
-      if (isReceiptPaper) {
-        if (x < minX) minX = x;
-        if (x > maxX) maxX = x;
-        if (y < minY) minY = y;
-        if (y > maxY) maxY = y;
-        count++;
-      }
-    }
-  }
-
-  // If valid receipt geometry detected (at least 15% of image)
-  const cropW = maxX - minX;
-  const cropH = maxY - minY;
-  const isGeometryValid = count > (w * h * 0.1) && cropW > w * 0.3 && cropH > h * 0.3;
-
-  const startX = isGeometryValid ? Math.max(0, minX - 10) : 0;
-  const startY = isGeometryValid ? Math.max(0, minY - 10) : 0;
-  const finalW = isGeometryValid ? Math.min(w - startX, cropW + 20) : w;
-  const finalH = isGeometryValid ? Math.min(h - startY, cropH + 20) : h;
-
-  // Render cropped receipt geometry
-  canvas.width = finalW;
-  canvas.height = finalH;
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, finalW, finalH);
-  ctx.drawImage(img, startX, startY, finalW, finalH, 0, 0, finalW, finalH);
-
-  // Apply Document Scan Filter if requested
-  if (applyScanFilter) {
-    const croppedData = ctx.getImageData(0, 0, finalW, finalH);
-    const d = croppedData.data;
-
-    for (let i = 0; i < d.length; i += 4) {
-      let gray = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-
-      if (gray > 160) {
-        gray = 255;
-      } else if (gray < 90) {
-        gray = 0;
-      } else {
-        gray = (gray - 90) * (255 / (160 - 90));
-      }
-
-      d[i] = gray;
-      d[i + 1] = gray;
-      d[i + 2] = gray;
-    }
-    ctx.putImageData(croppedData, 0, 0);
-  }
-}
-
-/**
- * Mobile Document Scanner Canvas Filter with Auto Geometry Crop
- */
-function processDocumentScan(dataUrl: string, applyScanFilter = true, autoCropGeometry = true, rotationDeg = 0): Promise<string> {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => {
-      const maxDim = 1000;
-      let w = img.width;
-      let h = img.height;
-
-      if (w > maxDim || h > maxDim) {
-        if (w > h) {
-          h = Math.round((h * maxDim) / w);
-          w = maxDim;
-        } else {
-          w = Math.round((w * maxDim) / h);
-          h = maxDim;
-        }
-      }
-
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return resolve(dataUrl);
-
-      if (autoCropGeometry) {
-        autoCropBillGeometry(img, canvas, ctx, applyScanFilter);
-      } else {
-        const isRotated90 = (rotationDeg / 90) % 2 !== 0;
-        canvas.width = isRotated90 ? h : w;
-        canvas.height = isRotated90 ? w : h;
-
-        ctx.save();
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-        ctx.translate(canvas.width / 2, canvas.height / 2);
-        ctx.rotate((rotationDeg * Math.PI) / 180);
-        ctx.drawImage(img, -w / 2, -h / 2, w, h);
-        ctx.restore();
-
-        if (applyScanFilter) {
-          const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          const d = imgData.data;
-
-          for (let i = 0; i < d.length; i += 4) {
-            let gray = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-
-            if (gray > 160) {
-              gray = 255;
-            } else if (gray < 90) {
-              gray = 0;
-            } else {
-              gray = (gray - 90) * (255 / (160 - 90));
-            }
-
-            d[i] = gray;
-            d[i + 1] = gray;
-            d[i + 2] = gray;
-          }
-          ctx.putImageData(imgData, 0, 0);
-        }
-      }
-
-      resolve(canvas.toDataURL('image/jpeg', 0.8));
-    };
-    img.onerror = () => resolve(dataUrl);
-    img.src = dataUrl;
-  });
-}
 
 export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
   isOpen,
@@ -194,17 +48,23 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
   const [receiptFileName, setReceiptFileName] = useState<string | undefined>(initialValues?.receiptFileName);
   const [isPdfFile, setIsPdfFile] = useState<boolean>(initialValues?.receiptFileName?.endsWith('.pdf') || false);
 
-  // Scanner controls
-  const [isScanFilterActive, setIsScanFilterActive] = useState<boolean>(true);
-  const [isAutoCropActive, setIsAutoCropActive] = useState<boolean>(true);
+  // Scanner geometry / look, kept so the crop can be re-opened and re-applied
+  const [scanQuad, setScanQuad] = useState<Quad | null>(null);
+  const [scanMode, setScanMode] = useState<EnhanceMode>('color');
   const [rotationDeg, setRotationDeg] = useState<number>(0);
+  const [edgesDetected, setEdgesDetected] = useState(false);
+
+  // Scanner surfaces
+  const [isCameraOpen, setIsCameraOpen] = useState(false);
+  const [cropSource, setCropSource] = useState<string | null>(null);
 
   // OCR states
   const [isScanning, setIsScanning] = useState(false);
+  const [isProcessingImage, setIsProcessingImage] = useState(false);
   const [ocrDetectedAmount, setOcrDetectedAmount] = useState<number | null>(null);
   const [rawOcrText, setRawOcrText] = useState<string>('');
 
-  // Separate refs for Camera vs File Gallery upload
+  // Fallback camera input (used when getUserMedia is unavailable) + gallery picker
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
 
@@ -221,8 +81,62 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
 
   if (!isOpen) return null;
 
+  /** Reads OCR fields off an already scanned (deskewed + enhanced) image. */
+  const runOcr = async (ocrImage: string) => {
+    setIsScanning(true);
+    try {
+      const ocrResult = await scanReceiptImage(ocrImage);
+
+      if (ocrResult.rawText) setRawOcrText(ocrResult.rawText);
+
+      if (ocrResult.currencyHint === 'USD') {
+        setOriginalCurrency('USD');
+        if (ocrResult.amount !== undefined) {
+          setUsdAmount(String(ocrResult.amount));
+          setSarAmount((ocrResult.amount * 3.75).toFixed(2));
+        }
+      } else {
+        setOriginalCurrency('SAR'); // Default SAR
+        if (ocrResult.amount !== undefined) {
+          setOcrDetectedAmount(ocrResult.amount);
+          setSarAmount(String(ocrResult.amount));
+        }
+      }
+
+      if (ocrResult.date) setDate(ocrResult.date);
+      if (ocrResult.vendor && !description) setDescription(ocrResult.vendor);
+      if (ocrResult.category) setCategory(ocrResult.category);
+    } finally {
+      setIsScanning(false);
+    }
+  };
+
+  /** Camera frame confirmed in the crop editor, or a re-crop of an existing scan. */
+  const handleCropConfirmed = async (result: {
+    dataUrl: string;
+    ocrDataUrl: string;
+    quad: Quad;
+    mode: EnhanceMode;
+    rotation: number;
+  }) => {
+    setRawUploadedImage(cropSource ?? rawUploadedImage);
+    setReceiptImage(result.dataUrl);
+    setScanQuad(result.quad);
+    setScanMode(result.mode);
+    setRotationDeg(result.rotation);
+    setEdgesDetected(true);
+    setIsPdfFile(false);
+    if (!receiptFileName) {
+      setReceiptFileName(`scan-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '')}.jpg`);
+    }
+    setCropSource(null);
+    await runOcr(result.ocrDataUrl);
+  };
+
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    // Allow re-picking the same file (change does not fire otherwise).
+    e.target.value = '';
     if (!file) return;
 
     setReceiptFileName(file.name);
@@ -251,42 +165,26 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
       reader.onload = async (event) => {
         const rawDataUrl = event.target?.result as string;
         setRawUploadedImage(rawDataUrl);
+        setRotationDeg(0);
+        setIsProcessingImage(true);
 
-        // Apply Document Geometry Auto Crop & High Contrast Filter
-        const scannedDataUrl = await processDocumentScan(rawDataUrl, true, true, 0);
-        setReceiptImage(scannedDataUrl);
+        try {
+          // Detect the page boundary, perspective-correct it, then enhance.
+          const scan = await autoScanImage(rawDataUrl, { mode: scanMode });
+          setReceiptImage(scan.dataUrl);
+          setScanQuad(scan.quad);
+          setEdgesDetected(scan.detected);
+          setIsProcessingImage(false);
 
-        // Run OCR with Arabic (ر.س / المجموع / ٠-٩) & English support
-        setIsScanning(true);
-        const ocrResult = await scanReceiptImage(scannedDataUrl);
-        setIsScanning(false);
-
-        if (ocrResult.rawText) setRawOcrText(ocrResult.rawText);
-
-        if (ocrResult.currencyHint === 'USD') {
-          setOriginalCurrency('USD');
-          if (ocrResult.amount !== undefined) {
-            setUsdAmount(String(ocrResult.amount));
-            setSarAmount((ocrResult.amount * 3.75).toFixed(2));
-          }
-        } else {
-          setOriginalCurrency('SAR'); // Default SAR
-          if (ocrResult.amount !== undefined) {
-            setOcrDetectedAmount(ocrResult.amount);
-            setSarAmount(String(ocrResult.amount));
-          }
-        }
-
-        if (ocrResult.date) {
-          setDate(ocrResult.date);
-        }
-
-        if (ocrResult.vendor && !description) {
-          setDescription(ocrResult.vendor);
-        }
-
-        if (ocrResult.category) {
-          setCategory(ocrResult.category);
+          // Run OCR with Arabic (ر.س / المجموع / ٠-٩) & English support
+          await runOcr(scan.ocrDataUrl);
+        } catch {
+          // Keep the original photo usable even if processing failed.
+          setReceiptImage(rawDataUrl);
+          setScanQuad(null);
+          setEdgesDetected(false);
+          setIsProcessingImage(false);
+          await runOcr(rawDataUrl);
         }
       };
 
@@ -294,13 +192,21 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
     }
   };
 
-  const handleUpdateScanSettings = async (filterOn: boolean, autoCrop: boolean, rot: number) => {
+  const openCropEditor = () => {
     if (!rawUploadedImage) return;
-    setIsScanFilterActive(filterOn);
-    setIsAutoCropActive(autoCrop);
-    setRotationDeg(rot);
-    const updated = await processDocumentScan(rawUploadedImage, filterOn, autoCrop, rot);
-    setReceiptImage(updated);
+    setCropSource(rawUploadedImage);
+  };
+
+  const clearAttachment = () => {
+    setRawUploadedImage(undefined);
+    setReceiptImage(undefined);
+    setReceiptFileName(undefined);
+    setIsPdfFile(false);
+    setOcrDetectedAmount(null);
+    setRawOcrText('');
+    setScanQuad(null);
+    setRotationDeg(0);
+    setEdgesDetected(false);
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -360,50 +266,21 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                 Bill / Receipt Attachment
               </label>
 
-              {/* Document Scanner Controls */}
-              {receiptImage && !isPdfFile && (
-                <div className="flex items-center space-x-1.5">
-                  <button
-                    type="button"
-                    onClick={() => handleUpdateScanSettings(!isScanFilterActive, isAutoCropActive, rotationDeg)}
-                    className={`px-2 py-0.5 rounded text-[11px] font-semibold border flex items-center gap-1 transition ${
-                      isScanFilterActive
-                        ? 'bg-cyan-500/20 border-cyan-500/40 text-cyan-300'
-                        : 'bg-slate-800 border-slate-700 text-slate-400'
-                    }`}
-                    title="Toggle Scan Contrast Filter"
-                  >
-                    <Contrast className="w-3 h-3" />
-                    <span>Filter</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => handleUpdateScanSettings(isScanFilterActive, !isAutoCropActive, rotationDeg)}
-                    className={`px-2 py-0.5 rounded text-[11px] font-semibold border flex items-center gap-1 transition ${
-                      isAutoCropActive
-                        ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
-                        : 'bg-slate-800 border-slate-700 text-slate-400'
-                    }`}
-                    title="Toggle Auto Geometry Edge Crop"
-                  >
-                    <Crop className="w-3 h-3" />
-                    <span>Auto Geometry</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => handleUpdateScanSettings(isScanFilterActive, isAutoCropActive, (rotationDeg + 90) % 360)}
-                    className="p-1 rounded bg-slate-800 border border-slate-700 text-slate-300 hover:text-cyan-400 transition"
-                    title="Rotate Photo 90°"
-                  >
-                    <RotateCw className="w-3.5 h-3.5" />
-                  </button>
-                </div>
+              {/* Re-open the crop / enhancement editor for the current scan */}
+              {receiptImage && !isPdfFile && rawUploadedImage && (
+                <button
+                  type="button"
+                  onClick={openCropEditor}
+                  className="px-2 py-0.5 rounded text-[11px] font-semibold border bg-cyan-500/20 border-cyan-500/40 text-cyan-300 flex items-center gap-1 transition hover:bg-cyan-500/30"
+                  title="Adjust crop corners, rotation and scan filter"
+                >
+                  <Crop className="w-3 h-3" />
+                  <span>Adjust Crop</span>
+                </button>
               )}
             </div>
 
-            {/* Hidden Input Ref 1: Mobile Camera Capture */}
+            {/* Fallback camera input, used only when live capture is unavailable */}
             <input
               type="file"
               ref={cameraInputRef}
@@ -425,16 +302,16 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
             {!receiptImage && !receiptFileName ? (
               <div className="grid grid-cols-2 gap-3">
                 
-                {/* 1. Camera Trigger */}
+                {/* 1. Live Document Scanner */}
                 <div
-                  onClick={() => cameraInputRef.current?.click()}
+                  onClick={() => setIsCameraOpen(true)}
                   className="border-2 border-dashed border-slate-700 hover:border-[#00A3E0] rounded-xl p-4 flex flex-col items-center justify-center cursor-pointer bg-slate-800/40 hover:bg-slate-800/80 transition text-center group"
                 >
                   <div className="w-10 h-10 rounded-full bg-[#00A3E0]/10 group-hover:bg-[#00A3E0]/20 text-[#00A3E0] flex items-center justify-center mb-1.5 transition">
-                    <Camera className="w-5 h-5" />
+                    <ScanLine className="w-5 h-5" />
                   </div>
-                  <span className="text-xs font-bold text-slate-200">Take Photo</span>
-                  <span className="text-[10px] text-slate-400 mt-0.5">Use Phone Camera</span>
+                  <span className="text-xs font-bold text-slate-200">Scan Bill</span>
+                  <span className="text-[10px] text-slate-400 mt-0.5">Auto edge detect &amp; crop</span>
                 </div>
 
                 {/* 2. File / Gallery Upload Trigger */}
@@ -472,12 +349,20 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center space-x-2">
                     <span className="text-xs font-semibold text-slate-200 truncate">{receiptFileName || 'Scanned Document'}</span>
-                    {isScanning && (
-                      <span className="inline-flex items-center text-[10px] text-cyan-400 animate-pulse font-medium">
-                        <RefreshCw className="w-3 h-3 animate-spin mr-1" /> Scanning...
+                    {(isScanning || isProcessingImage) && (
+                      <span className="inline-flex items-center text-[10px] text-cyan-400 animate-pulse font-medium shrink-0">
+                        <RefreshCw className="w-3 h-3 animate-spin mr-1" />
+                        {isProcessingImage ? 'Cropping...' : 'Reading...'}
                       </span>
                     )}
                   </div>
+
+                  {!isPdfFile && !isProcessingImage && edgesDetected && (
+                    <div className="mt-0.5 flex items-center space-x-1 text-[10px] text-cyan-300/90 font-medium">
+                      <Crop className="w-3 h-3" />
+                      <span>Edges detected &amp; deskewed</span>
+                    </div>
+                  )}
 
                   {ocrDetectedAmount !== null && !isScanning && (
                     <div className="mt-1 flex items-center space-x-1.5 text-xs text-emerald-400 font-medium">
@@ -489,10 +374,10 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                   <div className="flex items-center space-x-3 mt-1 text-xs">
                     <button
                       type="button"
-                      onClick={() => cameraInputRef.current?.click()}
+                      onClick={() => setIsCameraOpen(true)}
                       className="text-cyan-400 hover:underline font-medium"
                     >
-                      Camera Photo
+                      Rescan
                     </button>
                     <span className="text-slate-600">|</span>
                     <button
@@ -507,13 +392,7 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
 
                 <button
                   type="button"
-                  onClick={() => {
-                    setRawUploadedImage(undefined);
-                    setReceiptImage(undefined);
-                    setReceiptFileName(undefined);
-                    setIsPdfFile(false);
-                    setOcrDetectedAmount(null);
-                  }}
+                  onClick={clearAttachment}
                   className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-slate-800 rounded-lg transition"
                 >
                   <X className="w-4 h-4" />
@@ -704,6 +583,41 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
         </form>
 
       </div>
+
+      {/* Live camera document scanner */}
+      <CameraScannerModal
+        isOpen={isCameraOpen}
+        onClose={() => setIsCameraOpen(false)}
+        onCapture={(frameDataUrl, quad) => {
+          setIsCameraOpen(false);
+          setRawUploadedImage(frameDataUrl);
+          setScanQuad(quad);
+          setRotationDeg(0);
+          setCropSource(frameDataUrl);
+        }}
+        onFallbackToFilePicker={() => {
+          setIsCameraOpen(false);
+          // Native camera app, then the same detect/deskew pipeline runs on the photo.
+          cameraInputRef.current?.click();
+        }}
+      />
+
+      {/* Crop + enhancement review step */}
+      {cropSource && (
+        <DocumentCropEditor
+          isOpen={Boolean(cropSource)}
+          sourceImage={cropSource}
+          initialQuad={scanQuad}
+          initialMode={scanMode}
+          initialRotation={rotationDeg}
+          onCancel={() => {
+            setCropSource(null);
+            // Nothing captured yet means "Retake" should reopen the camera.
+            if (!receiptImage) setIsCameraOpen(true);
+          }}
+          onConfirm={handleCropConfirmed}
+        />
+      )}
     </div>
   );
 };
