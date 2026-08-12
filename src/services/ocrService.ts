@@ -101,11 +101,11 @@ export interface AmountCandidate {
 /* Lines that never hold the payable total. Checked before anything else, so a
  * VAT or unit-price line cannot win just because it also says "شامل الضريبة". */
 const NON_TOTAL_LINE =
-  /(?:غير\s*شامل|قبل\s*الضريبة|الخصم|التقريب|القيمة\s*المضافة|الكمية|لتر|السعر|سعر\s*الوحدة|المضخة|\bVAT\b|\bTAX\b|SUB\s*-?\s*TOTAL|UNIT\s*PRICE|\bQTY\b|QUANTITY|\bLITER|\bLTR\b|\bCHANGE\b|CASH\s*BACK)/i;
+  /(?:غير\s*شامل|قبل\s*الضريبة|الخصم|التقريب|القيمة\s*المضافة|الكمية|لتر|السعر|سعر\s*الوحدة|المضخة|\bVAT\b|\bTAX\b|SUB\s*-?\s*TOTAL|UNIT\s*PRICE|\bQTY\b|QUANTITY|\bLITER|\bLTR\b|\bCHANGE\b|CASH\s*BACK|APPROVAL|AUTH\s*CODE|\bRRN\b|\bNCRB\b|TERMINAL|MERCHANT|\bBATCH\b|\bTRACE\b|\bAID\b|CONTACTLESS|CUSTOMER\s*COPY|RETAIN\s*RECEIPT|THANK\s*YOU)/i;
 
 /** Strongest wording for "the amount actually payable". */
 const TIER_TOTAL_STRONG =
-  /(?:المبلغ\s*شامل|شامل\s*الضريبة|الإجمالي\s*شامل|الاجمالي\s*شامل|المجموع\s*الكلي|المجموع\s*الإجمالي|إجمالي\s*الفاتورة|إجمالي\s*المبلغ|المبلغ\s*الإجمالي|GRAND\s*TOTAL|TOTAL\s*(?:AMOUNT|INCL|DUE|PAID)|AMOUNT\s*DUE|PURCHASE\s*AMOUNT|NET\s*AMOUNT|TOTAL\s*SAR)/i;
+  /(?:المبلغ\s*شامل|شامل\s*الضريبة|الإجمالي\s*شامل|الاجمالي\s*شامل|المجموع\s*الكلي|المجموع\s*الإجمالي|إجمالي\s*الفاتورة|إجمالي\s*المبلغ|المبلغ\s*الإجمالي|GRAND\s*TOTAL|TOTAL\s*(?:AMOUNT|INCL|DUE|PAID)|AMOUNT\s*DUE|PURCHASE\s*AMOUNT|NET\s*AMOUNT|TOTAL\s*SAR|مبلغ\s*الشراء|قيمة\s*الشراء)/i;
 
 /** Ordinary total wording. */
 const TIER_TOTAL =
@@ -129,16 +129,32 @@ function maskNonMonetaryDigits(line: string): string {
 
 const NUMBER_TOKEN = /\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d+[.,]\d{1,3}|\d+/g;
 
+/**
+ * A currency mark sitting against a number.
+ *
+ * Tesseract has no glyph for the Saudi Riyal symbol, so on a mada/Visa slip
+ * "SAR 70.00" comes back as "#70" — the symbol degrades to #, £, ¥ or similar.
+ * Those stand-ins are the only remaining evidence that the number is money, so
+ * they are treated as currency context rather than punctuation.
+ */
+const CURRENCY_MARK = /[﷼#£¥₹€$]|ر\.?\s*س|\bSAR\b|\bSR\b|ريال|\bRIYALS?\b/i;
+
 interface ParsedNumber {
   value: number;
   decimals: number;
+  /** A currency symbol sits immediately beside this number. */
+  currencyMarked: boolean;
 }
 
 function parseNumbersOnLine(line: string): ParsedNumber[] {
   const masked = maskNonMonetaryDigits(line);
   const out: ParsedNumber[] = [];
 
-  for (const token of masked.match(NUMBER_TOKEN) || []) {
+  for (const match of masked.matchAll(NUMBER_TOKEN)) {
+    const token = match[0];
+    const before = masked.slice(Math.max(0, match.index - 4), match.index);
+    const after = masked.slice(match.index + token.length, match.index + token.length + 4);
+    const currencyMarked = CURRENCY_MARK.test(before) || CURRENCY_MARK.test(after);
     let value: number;
     let decimals = 0;
 
@@ -156,7 +172,7 @@ function parseNumbersOnLine(line: string): ParsedNumber[] {
     }
 
     if (!isFinite(value) || value <= 0.04 || value > 200000) continue;
-    out.push({ value, decimals });
+    out.push({ value, decimals, currencyMarked });
   }
 
   return out;
@@ -220,7 +236,9 @@ export function extractAmountCandidates(text: string): AmountCandidate[] {
     carriedTier = 0;
 
     numbers.forEach((num, position) => {
-      let score = tier;
+      // A number printed against a currency symbol is money even when the
+      // receipt's own wording was lost to OCR.
+      let score = num.currencyMarked && !excluded ? Math.max(tier, 55) : tier;
 
       // Money is written with two decimals; three means a unit price.
       if (num.decimals === 2) score += 22;
@@ -269,17 +287,22 @@ export function extractArabicSarTotalAmount(text: string): number | undefined {
   const candidates = extractAmountCandidates(text);
   if (candidates.length === 0) return undefined;
 
-  // Only a keyword-backed match counts as confident; see scoring above.
-  const CONFIDENT_SCORE = 40;
-  if (candidates[0].score >= CONFIDENT_SCORE) return candidates[0].value;
+  // Among candidates the scoring cannot separate, the larger figure is the
+  // total: the smaller ones are its parts. This also settles the case where a
+  // slip prints two currency-marked numbers and OCR lost both labels.
+  const TIE_BAND = 10;
+  const best = candidates[0];
+  const tied = candidates.filter((c) => c.score >= best.score - TIE_BAND);
+  const winner = tied.reduce((a, c) => (c.value > a.value ? c : a), tied[0]);
 
-  // Otherwise fall back to the largest plainly-monetary value on the bill.
-  const usable = candidates.filter((c) => c.score >= 0);
-  if (usable.length === 0) return undefined;
+  // A negative best score means everything looked like a reference number.
+  if (best.score < 0) {
+    const monetary = candidates.filter((c) => c.value % 1 !== 0 && c.score > -25);
+    if (monetary.length === 0) return undefined;
+    return monetary.reduce((a, c) => (c.value > a.value ? c : a), monetary[0]).value;
+  }
 
-  const withDecimals = usable.filter((c) => c.value % 1 !== 0);
-  const pool = withDecimals.length > 0 ? withDecimals : usable;
-  return pool.reduce((best, c) => (c.value > best.value ? c : best), pool[0]).value;
+  return winner.value;
 }
 
 /**
