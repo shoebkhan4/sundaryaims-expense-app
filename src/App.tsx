@@ -7,6 +7,7 @@ import { ExpenseFormModal } from './components/ExpenseFormModal';
 import { F2PdfPreviewModal } from './components/F2PdfPreviewModal';
 import { OutlookModal } from './components/OutlookModal';
 import { HistoryDrawer } from './components/HistoryDrawer';
+import { ConfirmDialog } from './components/ConfirmDialog';
 import { Send, FileText, Sparkles, Building2, UserCheck, Calendar, Edit3, RotateCcw, Layers } from 'lucide-react';
 import { AIMS_LOGO_BASE64 } from './assets/images';
 
@@ -95,18 +96,29 @@ export default function App() {
   const [isOutlookModalOpen, setIsOutlookModalOpen] = useState(false);
   const [isHistoryDrawerOpen, setIsHistoryDrawerOpen] = useState(false);
 
+  // Pending destructive actions, each held until the user confirms.
+  const [expensePendingDelete, setExpensePendingDelete] = useState<ExpenseItem | null>(null);
+  const [isClearReportPending, setIsClearReportPending] = useState(false);
+
   const grandTotal = expenses.reduce((sum, item) => sum + item.amount, 0);
 
   const handleStartNewReport = () => {
-    if (window.confirm('Start a new blank expense report? This will clear your current draft list so you can enter fresh site expenses.')) {
-      setHeaderInfo({
-        ...INITIAL_HEADER_INFO,
-        dateSubmitted: new Date().toISOString().split('T')[0],
-        expenseTypeSummary: 'Sundry expenses August 2026'
-      });
-      setExpenses([]);
-      localStorage.removeItem('aims_expenses');
+    if (expenses.length === 0) {
+      // Nothing would be lost, so do not interrupt with a dialog.
+      resetReport();
+      return;
     }
+    setIsClearReportPending(true);
+  };
+
+  const resetReport = () => {
+    setHeaderInfo({
+      ...INITIAL_HEADER_INFO,
+      dateSubmitted: new Date().toISOString().split('T')[0],
+      expenseTypeSummary: 'Sundry expenses August 2026'
+    });
+    setExpenses([]);
+    localStorage.removeItem('aims_expenses');
   };
 
   const handleSaveExpense = (newExpenseData: Omit<ExpenseItem, 'id'>) => {
@@ -122,8 +134,17 @@ export default function App() {
     }
   };
 
+  /** Deletions always route through a confirmation dialog. */
   const handleDeleteExpense = (id: string) => {
+    const target = expenses.find(e => e.id === id);
+    if (target) setExpensePendingDelete(target);
+  };
+
+  const confirmDeleteExpense = () => {
+    if (!expensePendingDelete) return;
+    const id = expensePendingDelete.id;
     setExpenses(prev => prev.filter(e => e.id !== id));
+    setExpensePendingDelete(null);
   };
 
   const handleEditExpense = (item: ExpenseItem) => {
@@ -379,6 +400,35 @@ export default function App() {
           setHeaderInfo(header);
           setExpenses(items);
         }}
+      />
+
+      {/* Delete a single expense row */}
+      <ConfirmDialog
+        isOpen={Boolean(expensePendingDelete)}
+        title="Delete this expense item?"
+        message="The row and its attached bill will be removed from this report. This cannot be undone."
+        detail={
+          expensePendingDelete
+            ? `${expensePendingDelete.description} — SAR ${expensePendingDelete.amount.toFixed(2)} (${expensePendingDelete.date})`
+            : undefined
+        }
+        confirmLabel="Delete Item"
+        onConfirm={confirmDeleteExpense}
+        onCancel={() => setExpensePendingDelete(null)}
+      />
+
+      {/* Clear the whole form and start a new report */}
+      <ConfirmDialog
+        isOpen={isClearReportPending}
+        title="Delete this form and start fresh?"
+        message="Every expense row and attached bill in the current draft will be cleared. This cannot be undone."
+        detail={`${expenses.length} item${expenses.length === 1 ? '' : 's'} — SAR ${grandTotal.toFixed(2)}`}
+        confirmLabel="Delete Form"
+        onConfirm={() => {
+          resetReport();
+          setIsClearReportPending(false);
+        }}
+        onCancel={() => setIsClearReportPending(false)}
       />
 
     </div>

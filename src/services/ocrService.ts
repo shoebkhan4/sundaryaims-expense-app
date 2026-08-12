@@ -80,7 +80,7 @@ export async function scanReceiptImage(imageSrc: string | File): Promise<OcrResu
 /**
  * Robust extraction of SAR amounts from Saudi Arabic & English receipts
  */
-function extractArabicSarTotalAmount(text: string): number | undefined {
+export function extractArabicSarTotalAmount(text: string): number | undefined {
   const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
   
   // 1. High-priority Arabic & English Total Patterns
@@ -103,7 +103,7 @@ function extractArabicSarTotalAmount(text: string): number | undefined {
   }
 
   // 2. Search numbers attached to "ر.س" or "SAR" or "ريال" anywhere in text
-  const currencyMatch = text.match(/(?:ر\.س|ريال|SAR|SR)\s*[:=]?\s*(\d+(?:[\.,]\d{1,2})?)|(\d+(?:[\.,]\d{1,2})?)\s*(?:ر\.s|ريال|SAR|SR)/i);
+  const currencyMatch = text.match(/(?:ر\.س|ريال|SAR|SR)\s*[:=]?\s*(\d+(?:[\.,]\d{1,2})?)|(\d+(?:[\.,]\d{1,2})?)\s*(?:ر\.س|ريال|SAR|SR)/i);
   if (currencyMatch) {
     const valStr = currencyMatch[1] || currencyMatch[2];
     if (valStr) {
@@ -172,20 +172,46 @@ function autoDetectCategory(text: string): ExpenseCategory {
   return 'Sundry Consumable';
 }
 
-function extractDate(text: string): string | undefined {
-  const dateRegex = /\b(\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4})\b/;
-  const match = text.match(dateRegex);
-  if (match) {
-    try {
-      const d = new Date(match[0]);
-      if (!isNaN(d.getTime())) {
-        return d.toISOString().split('T')[0];
-      }
-    } catch {
-      // ignore
-    }
+/**
+ * Extracts a receipt date without relying on `new Date(string)`, which reads
+ * ambiguous forms as US month-first (03/04/2026 -> 4 March). Saudi receipts are
+ * day-first, so DD/MM is assumed unless the first field cannot be a day.
+ */
+export function extractDate(text: string): string | undefined {
+  const isoMatch = text.match(/\b(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})\b/);
+  if (isoMatch) {
+    const iso = buildIsoDate(Number(isoMatch[1]), Number(isoMatch[2]), Number(isoMatch[3]));
+    if (iso) return iso;
   }
+
+  const dmyMatch = text.match(/\b(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})\b/);
+  if (dmyMatch) {
+    let [, first, second, yearStr] = dmyMatch;
+    let year = Number(yearStr);
+    if (year < 100) year += year < 70 ? 2000 : 1900;
+
+    let day = Number(first);
+    let month = Number(second);
+    // Only flip to month-first when the day-first reading is impossible.
+    if (day > 12 && month > 12) return undefined;
+    if (day > 31 || (month > 12 && day <= 12)) {
+      [day, month] = [month, day];
+    }
+
+    const iso = buildIsoDate(year, month, day);
+    if (iso) return iso;
+  }
+
   return undefined;
+}
+
+function buildIsoDate(year: number, month: number, day: number): string | undefined {
+  if (month < 1 || month > 12 || day < 1 || day > 31) return undefined;
+  if (year < 2000 || year > 2100) return undefined;
+
+  const d = new Date(Date.UTC(year, month - 1, day));
+  if (d.getUTCMonth() !== month - 1 || d.getUTCDate() !== day) return undefined;
+  return d.toISOString().split('T')[0];
 }
 
 function extractVendor(text: string): string | undefined {
