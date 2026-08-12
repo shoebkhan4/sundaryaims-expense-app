@@ -394,7 +394,11 @@ function quadFromRegion(gray: Uint8Array, w: number, h: number, bright: boolean)
   for (let i = 0; i < mask.length; i++) {
     mask[i] = (bright ? gray[i] > t : gray[i] <= t) ? 1 : 0;
   }
+  return quadFromMask(mask, w, h);
+}
 
+/** Largest connected blob of `mask` -> convex hull -> largest inscribed quad. */
+function quadFromMask(mask: Uint8Array, w: number, h: number): Quad | null {
   // Flood fill to find the biggest blob (iterative, typed stack).
   const labels = new Int32Array(w * h).fill(-1);
   const stack = new Int32Array(w * h);
@@ -798,6 +802,109 @@ export function warpPerspective(source: HTMLCanvasElement, quad: Quad): HTMLCanv
   return out;
 }
 
+/**
+ * Shaves dark slivers of background left inside the crop.
+ *
+ * The crop is a straight quadrilateral, but paper curls: along a bowed edge the
+ * quad keeps a wedge of table top. Enhancement then renders that wedge as a
+ * solid black band, and — worse — the dark pixels drag the white-point and
+ * threshold statistics for the whole page.
+ */
+function trimDarkBorders(canvas: HTMLCanvasElement): HTMLCanvasElement {
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) return canvas;
+
+  const { width: w, height: h } = canvas;
+  if (w < 32 || h < 32) return canvas;
+
+  const data = ctx.getImageData(0, 0, w, h).data;
+  const luma = (x: number, y: number) => {
+    const o = (y * w + x) * 4;
+    return 0.299 * data[o] + 0.587 * data[o + 1] + 0.114 * data[o + 2];
+  };
+
+  // Page level from the middle, where background never reaches.
+  const samples: number[] = [];
+  const stepX = Math.max(1, Math.floor(w / 80));
+  const stepY = Math.max(1, Math.floor(h / 80));
+  for (let y = Math.floor(h * 0.25); y < h * 0.75; y += stepY) {
+    for (let x = Math.floor(w * 0.25); x < w * 0.75; x += stepX) samples.push(luma(x, y));
+  }
+  if (samples.length === 0) return canvas;
+  samples.sort((a, b) => a - b);
+  const pageLevel = samples[samples.length >> 1];
+  const darkLimit = pageLevel * 0.6;
+
+  /**
+   * A background sliver is dark, featureless, and — decisively — the page
+   * resumes right after it. A dark header bar is also dark and its solid part
+   * is featureless, but what follows is more content, not paper. Requiring the
+   * next line to be paper is what stops the trim eating a logo band.
+   */
+  const DARK_SHARE = 0.45;
+  const MAX_TRIM = 0.06;
+  const FLAT_LIMIT = 26;
+  const PAPER_RESUMES = pageLevel * 0.8;
+
+  const lineStats = (read: (i: number) => number, length: number) => {
+    let dark = 0;
+    let sum = 0;
+    let sumSq = 0;
+    let n = 0;
+    for (let i = 0; i < length; i += 2) {
+      const v = read(i);
+      if (v < darkLimit) dark++;
+      sum += v;
+      sumSq += v * v;
+      n++;
+    }
+    const mean = n ? sum / n : 0;
+    const std = n ? Math.sqrt(Math.max(0, sumSq / n - mean * mean)) : 0;
+    return { darkShare: n ? dark / n : 0, mean, std };
+  };
+
+  /** Depth of background to remove from one edge, 0 when it is not background. */
+  const trimDepth = (
+    lineAt: (offset: number) => { darkShare: number; mean: number; std: number },
+    limit: number
+  ) => {
+    let depth = 0;
+    while (depth < limit) {
+      const line = lineAt(depth);
+      if (line.darkShare > DARK_SHARE && line.std < FLAT_LIMIT) depth++;
+      else break;
+    }
+    if (depth === 0) return 0;
+    // Only background if the page itself starts where the dark strip ends.
+    return lineAt(depth).mean >= PAPER_RESUMES ? depth : 0;
+  };
+
+  const left = trimDepth((o) => lineStats((y) => luma(o, y), h), Math.floor(w * MAX_TRIM));
+  const right =
+    w - 1 - trimDepth((o) => lineStats((y) => luma(w - 1 - o, y), h), Math.floor(w * MAX_TRIM));
+  const top = trimDepth((o) => lineStats((x) => luma(x, o), w), Math.floor(h * MAX_TRIM));
+  const bottom =
+    h - 1 - trimDepth((o) => lineStats((x) => luma(x, h - 1 - o), w), Math.floor(h * MAX_TRIM));
+
+  const cropW = right - left + 1;
+  const cropH = bottom - top + 1;
+  if (cropW === w && cropH === h) return canvas;
+  if (cropW < w * 0.5 || cropH < h * 0.5) return canvas;
+
+  const out = document.createElement('canvas');
+  out.width = cropW;
+  out.height = cropH;
+  const outCtx = out.getContext('2d', { willReadFrequently: true });
+  if (!outCtx) return canvas;
+  outCtx.drawImage(canvas, left, top, cropW, cropH, 0, 0, cropW, cropH);
+  return out;
+}
+
+/** Perspective-corrects the quad, then removes any background left at the edges. */
+function warpDocument(source: HTMLCanvasElement, quad: Quad): HTMLCanvasElement {
+  return trimDarkBorders(warpPerspective(source, quad));
+}
+
 /* ------------------------------------------------------------------ *
  * Enhancement
  * ------------------------------------------------------------------ */
@@ -827,6 +934,54 @@ function removeShadows(img: ImageData): void {
       data[o + 1] = Math.min(255, data[o + 1] * gain);
       data[o + 2] = Math.min(255, data[o + 2] * gain);
     }
+  }
+}
+
+/**
+ * Neutralises the light source and lifts the paper to true white.
+ *
+ * Shadow removal derives a single gain from luminance and applies it to all
+ * three channels, which preserves — and by amplifying, worsens — the colour
+ * cast of the room light: warm bulbs come out yellow, shade comes out blue.
+ * Balancing each channel against its own paper white point is what makes a
+ * photo look like it came off a scanner.
+ */
+function neutralisePaperWhite(img: ImageData): void {
+  const data = img.data;
+  const pixels = img.width * img.height;
+
+  // Split ink from paper, then measure the paper itself. A global percentile
+  // would be dragged around by how much ink the bill happens to carry, and by
+  // any specular glare; the paper class is what should end up neutral white.
+  const luma = new Uint8Array(pixels);
+  for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+    luma[p] = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+  }
+  const inkThreshold = otsuThreshold(luma);
+
+  const sums = [0, 0, 0];
+  let count = 0;
+  for (let p = 0; p < pixels; p++) {
+    if (luma[p] <= inkThreshold) continue;
+    const o = p * 4;
+    sums[0] += data[o];
+    sums[1] += data[o + 1];
+    sums[2] += data[o + 2];
+    count++;
+  }
+  if (count < pixels * 0.05) return; // Barely any paper: leave it alone.
+
+  const TARGET_WHITE = 248;
+  const gains = sums.map((sum) => {
+    const mean = sum / count;
+    // Clamped so a dark or genuinely coloured document cannot be blown out.
+    return Math.min(2.2, Math.max(0.7, TARGET_WHITE / Math.max(48, mean)));
+  });
+
+  for (let i = 0; i < data.length; i += 4) {
+    data[i] = Math.min(255, data[i] * gains[0]);
+    data[i + 1] = Math.min(255, data[i + 1] * gains[1]);
+    data[i + 2] = Math.min(255, data[i + 2] * gains[2]);
   }
 }
 
@@ -928,10 +1083,14 @@ export function enhanceCanvas(canvas: HTMLCanvasElement, mode: EnhanceMode): HTM
   removeShadows(img);
 
   if (mode === 'bw') {
+    // Adaptive thresholding is already illumination- and colour-invariant.
     adaptiveThreshold(img);
   } else {
     if (mode === 'gray') toGrayscaleInPlace(img);
     stretchContrast(img);
+    // Balanced last: the contrast stretch applies one luminance-derived curve to
+    // all three channels, so balancing before it would be partly undone.
+    neutralisePaperWhite(img);
     sharpen(img);
   }
 
@@ -1005,7 +1164,7 @@ export function processDocument(source: HTMLCanvasElement, options: ProcessOptio
 
   let canvas = source;
   if (quad) {
-    canvas = warpPerspective(source, quad);
+    canvas = warpDocument(source, quad);
   }
   canvas = enhanceCanvas(canvas, mode);
   canvas = rotateCanvas(canvas, rotation);
@@ -1047,7 +1206,7 @@ export async function autoScanImage(
   }
 
   const effectiveQuad = quad ?? fullFrameQuad(canvas.width, canvas.height);
-  const warped = warpPerspective(canvas, effectiveQuad);
+  const warped = warpDocument(canvas, effectiveQuad);
 
   const display = enhanceCanvas(cloneCanvas(warped), options.mode ?? 'color');
   const ocr = enhanceCanvas(cloneCanvas(warped), 'gray');
