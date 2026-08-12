@@ -598,10 +598,17 @@ function drawBillCell(
  * onto a single sheet (fuel bills together, food bills together, and so on),
  * spilling onto extra sheets of the same category only past nine bills.
  */
+/** One consolidated attachment sheet, surfaced so the UI can state what the PDF holds. */
+export interface BillSheetSummary {
+  category: string;
+  bills: number;
+  total: number;
+}
+
 export async function generateCompiledBillsPdf(
   headerInfo: CompanyHeaderInfo,
   expenses: ExpenseItem[]
-): Promise<{ pdfBlob: Blob; fileName: string; base64: string }> {
+): Promise<{ pdfBlob: Blob; fileName: string; base64: string; sheets: BillSheetSummary[] }> {
   const doc = new jsPDF({
     orientation: 'portrait',
     unit: 'mm',
@@ -617,6 +624,7 @@ export async function generateCompiledBillsPdf(
   const contentW = pageWidth - margin * 2;
 
   const groups = groupBillsForAttachmentSheets(expenses);
+  const sheetSummaries: BillSheetSummary[] = [];
   let sheetNo = 0;
 
   groups.forEach((group) => {
@@ -625,6 +633,11 @@ export async function generateCompiledBillsPdf(
     sheets.forEach((sheetItems, sheetIdx) => {
       if (sheetNo > 0) doc.addPage();
       sheetNo++;
+      sheetSummaries.push({
+        category: group.category,
+        bills: sheetItems.length,
+        total: sheetItems.reduce((sum, i) => sum + i.amount, 0)
+      });
 
       // Category banner
       doc.setFillColor(0, 163, 224);
@@ -710,7 +723,8 @@ export async function generateCompiledBillsPdf(
   return {
     pdfBlob,
     fileName,
-    base64
+    base64,
+    sheets: sheetSummaries
   };
 }
 
