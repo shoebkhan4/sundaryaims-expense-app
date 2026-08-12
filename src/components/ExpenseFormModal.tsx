@@ -63,6 +63,9 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
   const [isProcessingImage, setIsProcessingImage] = useState(false);
   const [ocrDetectedAmount, setOcrDetectedAmount] = useState<number | null>(null);
   const [rawOcrText, setRawOcrText] = useState<string>('');
+  /** Other totals found on the bill, offered as one-tap corrections. */
+  const [amountOptions, setAmountOptions] = useState<number[]>([]);
+  const [showOcrText, setShowOcrText] = useState(false);
 
   // Fallback camera input (used when getUserMedia is unavailable) + gallery picker
   const cameraInputRef = useRef<HTMLInputElement>(null);
@@ -88,6 +91,7 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
       const ocrResult = await scanReceiptImage(ocrImage);
 
       if (ocrResult.rawText) setRawOcrText(ocrResult.rawText);
+      setAmountOptions(ocrResult.amountOptions ?? []);
 
       if (ocrResult.currencyHint === 'USD') {
         setOriginalCurrency('USD');
@@ -204,6 +208,8 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
     setIsPdfFile(false);
     setOcrDetectedAmount(null);
     setRawOcrText('');
+    setAmountOptions([]);
+    setShowOcrText(false);
     setScanQuad(null);
     setRotationDeg(0);
     setEdgesDetected(false);
@@ -371,7 +377,7 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                     </div>
                   )}
 
-                  <div className="flex items-center space-x-3 mt-1 text-xs">
+                  <div className="flex items-center space-x-3 mt-1 text-xs flex-wrap gap-y-1">
                     <button
                       type="button"
                       onClick={() => setIsCameraOpen(true)}
@@ -387,6 +393,18 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                     >
                       Gallery File
                     </button>
+                    {rawOcrText && (
+                      <>
+                        <span className="text-slate-600">|</span>
+                        <button
+                          type="button"
+                          onClick={() => setShowOcrText((v) => !v)}
+                          className="text-slate-400 hover:text-slate-200 hover:underline font-medium"
+                        >
+                          {showOcrText ? 'Hide text' : 'Scanned text'}
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
 
@@ -398,6 +416,16 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                   <X className="w-4 h-4" />
                 </button>
               </div>
+            )}
+
+            {/* What the OCR actually read — the fastest way to see why a value looks wrong */}
+            {showOcrText && rawOcrText && (
+              <pre
+                dir="auto"
+                className="mt-2 max-h-40 overflow-auto rounded-xl bg-slate-950 border border-slate-800 p-3 text-[10px] leading-relaxed text-slate-400 whitespace-pre-wrap break-words"
+              >
+                {rawOcrText}
+              </pre>
             )}
           </div>
 
@@ -496,6 +524,31 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                   className="w-full bg-slate-950 border border-slate-700 rounded-xl pl-14 pr-3 py-2.5 text-base font-black text-emerald-400 focus:outline-none focus:border-cyan-500"
                 />
               </div>
+
+              {/* OCR picked one total; the other figures on the bill are one tap away. */}
+              {amountOptions.length > 0 && (
+                <div className="mt-2">
+                  <span className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">
+                    Wrong amount? Other figures on this bill
+                  </span>
+                  <div className="flex flex-wrap gap-1.5 mt-1">
+                    {amountOptions.map((option) => (
+                      <button
+                        key={option}
+                        type="button"
+                        onClick={() => setSarAmount(option.toFixed(2))}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition ${
+                          sarAmount === option.toFixed(2)
+                            ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-300'
+                            : 'bg-slate-800 border-slate-700 text-slate-300 hover:border-cyan-500/60 hover:text-cyan-300'
+                        }`}
+                      >
+                        {option.toFixed(2)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
             /* USD CONVERSION BOX */

@@ -3,6 +3,8 @@ import { ExpenseCategory } from '../types/expense';
 
 export interface OcrResult {
   amount?: number;
+  /** Other monetary values found on the bill, best first, for one-tap correction. */
+  amountOptions?: number[];
   date?: string;
   vendor?: string;
   category?: ExpenseCategory;
@@ -53,6 +55,7 @@ export async function scanReceiptImage(imageSrc: string | File): Promise<OcrResu
     const isUsd = normalizedText.includes('$') || normalizedText.toLowerCase().includes('usd') || normalizedText.toLowerCase().includes('dollar');
     const currencyHint: 'SAR' | 'USD' = isUsd ? 'USD' : 'SAR';
 
+    const candidates = extractAmountCandidates(normalizedText);
     const parsedAmount = extractArabicSarTotalAmount(normalizedText);
     const parsedCategory = autoDetectCategory(normalizedText);
     const parsedDate = extractDate(normalizedText);
@@ -60,6 +63,14 @@ export async function scanReceiptImage(imageSrc: string | File): Promise<OcrResu
 
     return {
       amount: parsedAmount,
+      // Offer the other monetary values, largest first — a mis-read total is
+      // usually corrected to one of the bigger figures on the bill. Bare
+      // integers (pump numbers, item counts) are dropped unless labelled.
+      amountOptions: candidates
+        .filter((c) => c.value !== parsedAmount && (c.value % 1 !== 0 || c.score >= 40))
+        .sort((a, b) => b.value - a.value)
+        .map((c) => c.value)
+        .slice(0, 5),
       date: parsedDate,
       vendor: parsedVendor,
       category: parsedCategory,
@@ -78,50 +89,197 @@ export async function scanReceiptImage(imageSrc: string | File): Promise<OcrResu
 }
 
 /**
- * Robust extraction of SAR amounts from Saudi Arabic & English receipts
+ * A monetary value found on the bill, with why it was picked.
+ * Surfaced in the UI so a wrong guess is one tap away from being corrected.
+ */
+export interface AmountCandidate {
+  value: number;
+  score: number;
+  label: string;
+}
+
+/* Lines that never hold the payable total. Checked before anything else, so a
+ * VAT or unit-price line cannot win just because it also says "شامل الضريبة". */
+const NON_TOTAL_LINE =
+  /(?:غير\s*شامل|قبل\s*الضريبة|الخصم|التقريب|القيمة\s*المضافة|الكمية|لتر|السعر|سعر\s*الوحدة|المضخة|\bVAT\b|\bTAX\b|SUB\s*-?\s*TOTAL|UNIT\s*PRICE|\bQTY\b|QUANTITY|\bLITER|\bLTR\b|\bCHANGE\b|CASH\s*BACK)/i;
+
+/** Strongest wording for "the amount actually payable". */
+const TIER_TOTAL_STRONG =
+  /(?:المبلغ\s*شامل|شامل\s*الضريبة|الإجمالي\s*شامل|الاجمالي\s*شامل|المجموع\s*الكلي|المجموع\s*الإجمالي|إجمالي\s*الفاتورة|إجمالي\s*المبلغ|المبلغ\s*الإجمالي|GRAND\s*TOTAL|TOTAL\s*(?:AMOUNT|INCL|DUE|PAID)|AMOUNT\s*DUE|PURCHASE\s*AMOUNT|NET\s*AMOUNT|TOTAL\s*SAR)/i;
+
+/** Ordinary total wording. */
+const TIER_TOTAL =
+  /(?:الإجمالي|الاجمالي|المجموع|الصافي|صافي|المبلغ\s*المستحق|\bTOTAL\b|\bNET\b|\bDUE\b|\bPAID\b)/i;
+
+/** Merely currency context — weak on its own. */
+const TIER_CURRENCY = /(?:المبلغ|\bAMOUNT\b|ر\.?\s*س|ريال|\bSAR\b|\bSR\b|\bRIYALS?\b|\bSR\.|﷼)/i;
+
+/**
+ * Blanks out digit runs that are never money: dates, times, percentages,
+ * card masks, VAT/CR/phone numbers and invoice ids.
+ */
+function maskNonMonetaryDigits(line: string): string {
+  return line
+    .replace(/\b\d{1,4}\s*[./-]\s*\d{1,2}\s*[./-]\s*\d{2,4}\b/g, ' ')
+    .replace(/\b\d{1,2}:\d{2}(?::\d{2})?\b/g, ' ')
+    .replace(/\d+(?:[.,]\d+)?\s*%/g, ' ')
+    .replace(/[*#]{2,}/g, ' ')
+    .replace(/\b\d[\d,]{6,}\b/g, ' ');
+}
+
+const NUMBER_TOKEN = /\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d+[.,]\d{1,3}|\d+/g;
+
+interface ParsedNumber {
+  value: number;
+  decimals: number;
+}
+
+function parseNumbersOnLine(line: string): ParsedNumber[] {
+  const masked = maskNonMonetaryDigits(line);
+  const out: ParsedNumber[] = [];
+
+  for (const token of masked.match(NUMBER_TOKEN) || []) {
+    let value: number;
+    let decimals = 0;
+
+    if (/^\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?$/.test(token)) {
+      // 1,234.56 — comma groups thousands
+      const dot = token.indexOf('.');
+      decimals = dot === -1 ? 0 : token.length - dot - 1;
+      value = parseFloat(token.replace(/,/g, ''));
+    } else if (/^\d+[.,]\d{1,3}$/.test(token)) {
+      const sep = Math.max(token.lastIndexOf('.'), token.lastIndexOf(','));
+      decimals = token.length - sep - 1;
+      value = parseFloat(token.replace(',', '.'));
+    } else {
+      value = parseInt(token, 10);
+    }
+
+    if (!isFinite(value) || value <= 0.04 || value > 200000) continue;
+    out.push({ value, decimals });
+  }
+
+  return out;
+}
+
+/** Value of the first number on a line matching `pattern`, if any. */
+function findLabelledValue(lines: string[], pattern: RegExp): number | undefined {
+  for (const line of lines) {
+    if (!pattern.test(line)) continue;
+    const nums = parseNumbersOnLine(line);
+    if (nums.length > 0) return nums[nums.length - 1].value;
+  }
+  return undefined;
+}
+
+/**
+ * Scores every monetary value on the bill and ranks them, so the payable
+ * total wins over VAT, discounts, unit prices, quantities and reference
+ * numbers. Returns the ranked list; the UI offers the runners-up as
+ * one-tap corrections.
+ */
+export function extractAmountCandidates(text: string): AmountCandidate[] {
+  const lines = text
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+
+  if (lines.length === 0) return [];
+
+  // A total that equals subtotal + VAT is almost certainly the real total.
+  const subtotal = findLabelledValue(lines, /غير\s*شامل|قبل\s*الضريبة|SUB\s*-?\s*TOTAL/i);
+  // Must be the VAT *amount* line: a bare "ضريبة" also appears in the header
+  // ("فاتورة ضريبية") and in the unit-price line ("شامل الضريبة").
+  const vat = findLabelledValue(lines, /القيمة\s*المضافة|\bVAT\b/i);
+  const rounding = findLabelledValue(lines, /التقريب|ROUNDING/i) ?? 0;
+  const expectedTotal =
+    subtotal !== undefined && vat !== undefined ? subtotal + vat + rounding : undefined;
+
+  const scored = new Map<number, AmountCandidate>();
+  /** A total keyword with no number on its own line applies to the next line. */
+  let carriedTier = 0;
+
+  lines.forEach((line, index) => {
+    const strong = TIER_TOTAL_STRONG.test(line);
+    const total = TIER_TOTAL.test(line);
+    const currency = TIER_CURRENCY.test(line);
+    const excluded = NON_TOTAL_LINE.test(line);
+
+    // Excluded lines still yield candidates, heavily penalised: they must never
+    // win, but the user may still want to pick a subtotal or unit price by hand.
+    const ownTier = excluded ? -40 : strong ? 100 : total ? 70 : currency ? 40 : 0;
+    const numbers = parseNumbersOnLine(line);
+
+    if (numbers.length === 0) {
+      // Remember the label; receipts often print the value on the next line.
+      carriedTier = ownTier >= 70 ? ownTier : 0;
+      return;
+    }
+
+    const tier = Math.max(ownTier, carriedTier * 0.85);
+    carriedTier = 0;
+
+    numbers.forEach((num, position) => {
+      let score = tier;
+
+      // Money is written with two decimals; three means a unit price.
+      if (num.decimals === 2) score += 22;
+      else if (num.decimals === 3) score -= 30;
+      else if (num.decimals === 0) score -= 12;
+
+      // Totals sit near the bottom of a receipt. Kept small on unlabelled lines
+      // so position alone can never look like a confident match.
+      const position01 = index / Math.max(1, lines.length - 1);
+      score += (tier > 0 ? 12 : 5) * position01;
+
+      // On a labelled line the total is the last number ("TOTAL 3 items 90.00").
+      if (tier > 0 && position === numbers.length - 1) score += 8;
+
+      // Large round integers are usually reference numbers, not amounts.
+      if (num.decimals === 0 && num.value >= 10000) score -= 25;
+
+      if (expectedTotal !== undefined && Math.abs(num.value - expectedTotal) <= 0.06) {
+        score += 80;
+      }
+      if (subtotal !== undefined && Math.abs(num.value - subtotal) <= 0.001) score -= 45;
+      if (vat !== undefined && Math.abs(num.value - vat) <= 0.001) score -= 45;
+
+      const label = strong
+        ? 'total incl. VAT'
+        : total
+        ? 'total'
+        : currency
+        ? 'currency line'
+        : 'on the bill';
+
+      const existing = scored.get(num.value);
+      if (!existing || existing.score < score) {
+        scored.set(num.value, { value: num.value, score, label });
+      }
+    });
+  });
+
+  return Array.from(scored.values()).sort((a, b) => b.score - a.score);
+}
+
+/**
+ * Best guess at the payable total of a Saudi Arabic or English receipt.
  */
 export function extractArabicSarTotalAmount(text: string): number | undefined {
-  const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-  
-  // 1. High-priority Arabic & English Total Patterns
-  const totalKeywordsRegex = /(?:المجموع\s*الإجمالي|المجموع\s*الكلي|المجموع|الإجمالي|المبلغ\s*المستحق|إجمالي\s*الفاتورة|إجمالي\s*المبلغ|المبلغ|صافي|الصافي|TOTAL|GRAND\s*TOTAL|NET\s*AMOUNT|AMOUNT|SAR|SR|RIYAL|ر\.س|ريال)/i;
+  const candidates = extractAmountCandidates(text);
+  if (candidates.length === 0) return undefined;
 
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const line = lines[i];
-    if (totalKeywordsRegex.test(line)) {
-      // Find all numbers with decimals or integers in this line or nearby lines
-      const nums = line.match(/\b\d+(?:[\.,]\d{1,2})?\b/g);
-      if (nums && nums.length > 0) {
-        // Parse numbers from line
-        const parsed = nums.map(n => parseFloat(n.replace(',', '.'))).filter(v => !isNaN(v) && v > 0 && v < 500000);
-        if (parsed.length > 0) {
-          // Return the largest number found on total line
-          return Math.max(...parsed);
-        }
-      }
-    }
-  }
+  // Only a keyword-backed match counts as confident; see scoring above.
+  const CONFIDENT_SCORE = 40;
+  if (candidates[0].score >= CONFIDENT_SCORE) return candidates[0].value;
 
-  // 2. Search numbers attached to "ر.س" or "SAR" or "ريال" anywhere in text
-  const currencyMatch = text.match(/(?:ر\.س|ريال|SAR|SR)\s*[:=]?\s*(\d+(?:[\.,]\d{1,2})?)|(\d+(?:[\.,]\d{1,2})?)\s*(?:ر\.س|ريال|SAR|SR)/i);
-  if (currencyMatch) {
-    const valStr = currencyMatch[1] || currencyMatch[2];
-    if (valStr) {
-      const val = parseFloat(valStr.replace(',', '.'));
-      if (!isNaN(val) && val > 0) return val;
-    }
-  }
+  // Otherwise fall back to the largest plainly-monetary value on the bill.
+  const usable = candidates.filter((c) => c.score >= 0);
+  if (usable.length === 0) return undefined;
 
-  // 3. Fallback: Find largest valid monetary decimal number in receipt
-  const numbers = text.match(/\b\d{1,5}[\.,]\d{2}\b/g);
-  if (numbers && numbers.length > 0) {
-    const floatVals = numbers.map(n => parseFloat(n.replace(',', '.'))).filter(v => !isNaN(v) && v > 0 && v < 200000);
-    if (floatVals.length > 0) {
-      return Math.max(...floatVals);
-    }
-  }
-
-  return undefined;
+  const withDecimals = usable.filter((c) => c.value % 1 !== 0);
+  const pool = withDecimals.length > 0 ? withDecimals : usable;
+  return pool.reduce((best, c) => (c.value > best.value ? c : best), pool[0]).value;
 }
 
 /**
@@ -176,33 +334,74 @@ function autoDetectCategory(text: string): ExpenseCategory {
  * Extracts a receipt date without relying on `new Date(string)`, which reads
  * ambiguous forms as US month-first (03/04/2026 -> 4 March). Saudi receipts are
  * day-first, so DD/MM is assumed unless the first field cannot be a day.
+ *
+ * Every candidate must also land in a plausible window around today. A smudged
+ * thermal print that OCRs "12/08/26" as "12/08/06" would otherwise file the
+ * expense in 2006.
  */
-export function extractDate(text: string): string | undefined {
-  const isoMatch = text.match(/\b(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})\b/);
-  if (isoMatch) {
-    const iso = buildIsoDate(Number(isoMatch[1]), Number(isoMatch[2]), Number(isoMatch[3]));
-    if (iso) return iso;
-  }
+export function extractDate(text: string, today: Date = new Date()): string | undefined {
+  const lines = text.split('\n');
+  const candidates: { iso: string; score: number }[] = [];
 
-  const dmyMatch = text.match(/\b(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})\b/);
-  if (dmyMatch) {
-    let [, first, second, yearStr] = dmyMatch;
-    let year = Number(yearStr);
-    if (year < 100) year += year < 70 ? 2000 : 1900;
+  const oldest = new Date(today.getTime());
+  oldest.setFullYear(oldest.getFullYear() - 2);
+  const newest = new Date(today.getTime() + 2 * 24 * 60 * 60 * 1000);
 
-    let day = Number(first);
-    let month = Number(second);
-    // Only flip to month-first when the day-first reading is impossible.
-    if (day > 12 && month > 12) return undefined;
-    if (day > 31 || (month > 12 && day <= 12)) {
-      [day, month] = [month, day];
+  const isPlausible = (iso: string) => {
+    const d = new Date(`${iso}T00:00:00Z`);
+    return d >= new Date(oldest.toISOString().split('T')[0]) && d <= newest;
+  };
+
+  lines.forEach((line) => {
+    // Receipts label the date, and usually print a time beside it.
+    const labelled = /التاريخ|تاريخ|\bDATE\b/i.test(line);
+    const hasTime = /\b\d{1,2}:\d{2}\b/.test(line);
+
+    // ISO-like: 2026-08-11
+    for (const m of line.matchAll(/\b(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})\b/g)) {
+      const iso = buildIsoDate(Number(m[1]), Number(m[2]), Number(m[3]));
+      if (iso && isPlausible(iso)) {
+        candidates.push({ iso, score: 60 + (labelled ? 20 : 0) + (hasTime ? 15 : 0) });
+      }
     }
 
-    const iso = buildIsoDate(year, month, day);
-    if (iso) return iso;
-  }
+    // Day-first: 11.08.2026, 12/08/26
+    for (const m of line.matchAll(/\b(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})\b/g)) {
+      const first = Number(m[1]);
+      const second = Number(m[2]);
+      const yearRaw = m[3];
 
-  return undefined;
+      for (const year of expandYear(yearRaw, today)) {
+        let day = first;
+        let month = second;
+        if (day > 12 && month > 12) continue;
+        if (day > 31 || (month > 12 && day <= 12)) {
+          [day, month] = [month, day];
+        }
+        const iso = buildIsoDate(year, month, day);
+        if (iso && isPlausible(iso)) {
+          candidates.push({
+            iso,
+            score: 50 + (labelled ? 20 : 0) + (hasTime ? 15 : 0) + (yearRaw.length === 4 ? 10 : 0)
+          });
+          break;
+        }
+      }
+    }
+  });
+
+  if (candidates.length === 0) return undefined;
+
+  candidates.sort((a, b) => b.score - a.score);
+  return candidates[0].iso;
+}
+
+/** Two-digit years resolve to whichever century lands nearest today. */
+function expandYear(raw: string, today: Date): number[] {
+  if (raw.length === 4) return [Number(raw)];
+  const yy = Number(raw);
+  const century = Math.floor(today.getFullYear() / 100) * 100;
+  return [century + yy, century - 100 + yy];
 }
 
 function buildIsoDate(year: number, month: number, day: number): string | undefined {
@@ -214,10 +413,31 @@ function buildIsoDate(year: number, month: number, day: number): string | undefi
   return d.toISOString().split('T')[0];
 }
 
+/** Document titles and card-slip boilerplate are not the merchant's name. */
+const NOT_A_VENDOR =
+  /(?:فاتورة|ضريبية|مبسطة|ضريبة|TAX\s*INVOICE|SIMPLIFIED|INVOICE|RECEIPT|\bVISA\b|MASTERCARD|\bMADA\b|PURCHASE|CREDIT|DEBIT|بطاقة|APPROVED|WELCOME|THANK)/i;
+
+/**
+ * Picks the merchant line from the top of the receipt: the longest mostly
+ * alphabetic line that is not a document title or a row of digits.
+ */
 function extractVendor(text: string): string | undefined {
-  const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 2);
-  if (lines.length > 0) {
-    return lines[0].substring(0, 40);
+  const lines = text
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.length > 2)
+    .slice(0, 6);
+
+  let best: string | undefined;
+
+  for (const line of lines) {
+    if (NOT_A_VENDOR.test(line)) continue;
+
+    const letters = (line.match(/[\p{L}]/gu) || []).length;
+    if (letters < 4 || letters / line.length < 0.5) continue;
+
+    if (!best || line.length > best.length) best = line;
   }
-  return undefined;
+
+  return best ? best.substring(0, 40) : undefined;
 }
