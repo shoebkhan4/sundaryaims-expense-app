@@ -8,6 +8,7 @@ import { F2PdfPreviewModal } from './components/F2PdfPreviewModal';
 import { OutlookModal } from './components/OutlookModal';
 import { HistoryDrawer } from './components/HistoryDrawer';
 import { ConfirmDialog } from './components/ConfirmDialog';
+import { clearStoredExpenses, loadExpenses, loadReceiptImages, persistExpenses } from './services/expenseStorage';
 import { Send, FileText, Sparkles, Building2, UserCheck, Calendar, Edit3, RotateCcw, Layers } from 'lucide-react';
 import { AIMS_LOGO_BASE64 } from './assets/images';
 
@@ -62,10 +63,30 @@ export default function App() {
     return saved ? JSON.parse(saved) : INITIAL_HEADER_INFO;
   });
 
-  const [expenses, setExpenses] = useState<ExpenseItem[]>(() => {
-    const saved = localStorage.getItem('aims_expenses');
-    return saved ? JSON.parse(saved) : [];
-  });
+  // The list paints immediately; the receipt images arrive from IndexedDB just
+  // after, because they are far too large for localStorage.
+  const [expenses, setExpenses] = useState<ExpenseItem[]>(() => loadExpenses());
+
+  useEffect(() => {
+    let cancelled = false;
+    const saved = loadExpenses();
+    if (saved.length === 0) return;
+
+    loadReceiptImages(saved.map((e) => e.id)).then((images) => {
+      if (cancelled || images.size === 0) return;
+      // Merged by id rather than replacing the list, so anything added while
+      // the images were loading survives.
+      setExpenses((prev) =>
+        prev.map((expense) =>
+          expense.receiptImage ? expense : { ...expense, receiptImage: images.get(expense.id) }
+        )
+      );
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const [isEditingTitle, setIsEditingTitle] = useState(false);
 
@@ -108,13 +129,13 @@ export default function App() {
   const [storageError, setStorageError] = useState(false);
 
   useEffect(() => {
-    try {
-      localStorage.setItem('aims_expenses', JSON.stringify(expenses));
-      setStorageError(false);
-    } catch (e) {
-      console.warn('localStorage save failed for expenses', e);
-      setStorageError(true);
-    }
+    let cancelled = false;
+    persistExpenses(expenses).then((result) => {
+      if (!cancelled) setStorageError(!result.ok);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [expenses]);
 
   // Modals state
@@ -147,7 +168,7 @@ export default function App() {
       expenseTypeSummary: 'Sundry expenses August 2026'
     });
     setExpenses([]);
-    localStorage.removeItem('aims_expenses');
+    void clearStoredExpenses();
   };
 
   const handleSaveExpense = (newExpenseData: Omit<ExpenseItem, 'id'>) => {
