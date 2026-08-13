@@ -153,7 +153,13 @@ function parseNumbersOnLine(line: string): ParsedNumber[] {
   for (const match of masked.matchAll(NUMBER_TOKEN)) {
     const token = match[0];
     const before = masked.slice(Math.max(0, match.index - 4), match.index);
-    const after = masked.slice(match.index + token.length, match.index + token.length + 4);
+    const after = masked.slice(match.index + token.length, match.index + token.length + 6);
+
+    // A digit glued to a letter is not money — "2k" is what OCR made of a
+    // riyal amount it could not read, and reading it as 2.00 would fill the
+    // form with a confident wrong total. A trailing currency word is fine.
+    if (/^[A-Za-z]/.test(after) && !/^(?:sar|sr|riyals?|rs)\b/i.test(after)) continue;
+
     const currencyMarked = CURRENCY_MARK.test(before) || CURRENCY_MARK.test(after);
     let value: number;
     let decimals = 0;
