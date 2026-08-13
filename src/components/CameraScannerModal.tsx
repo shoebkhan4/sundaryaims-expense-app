@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { X, Zap, ZapOff, Camera, RefreshCw, Image as ImageIcon, AlertTriangle } from 'lucide-react';
-import { detectDocumentQuad, quadDrift, Quad } from '../services/documentScanner';
+import { detectDocumentQuad, estimateFocus, quadDrift, Quad } from '../services/documentScanner';
 
 interface CameraScannerModalProps {
   isOpen: boolean;
@@ -17,6 +17,15 @@ const STABLE_FRAMES_REQUIRED = 8;
 const STABLE_DRIFT_LIMIT = 0.02;
 /** Detection cadence — full detection on every frame is wasteful on phones. */
 const DETECT_INTERVAL_MS = 110;
+/**
+ * Laplacian spread below which the frame is still focusing. Calibrated against
+ * rendered blur: a sharp page scores ~50, 2px of blur ~19, 3px ~10, 5px ~5.
+ * A steady phone that has not focused yet is perfectly stable, so without this
+ * the auto-shutter fires on an unreadable frame.
+ */
+const FOCUS_MIN = 12;
+/** After this long stuck out of focus, tell the user to take the shot manually. */
+const FOCUS_HINT_AFTER_MS = 3000;
 
 type CameraState = 'idle' | 'starting' | 'live' | 'error';
 
@@ -36,6 +45,8 @@ export const CameraScannerModal: React.FC<CameraScannerModalProps> = ({
   const stableCountRef = useRef(0);
   const lastDetectRef = useRef(0);
   const capturedRef = useRef(false);
+  const focusRef = useRef(0);
+  const waitingForFocusSinceRef = useRef(0);
 
   const [cameraState, setCameraState] = useState<CameraState>('idle');
   const [errorMessage, setErrorMessage] = useState<string>('');
@@ -123,7 +134,9 @@ export const CameraScannerModal: React.FC<CameraScannerModalProps> = ({
       const wctx = work.getContext('2d', { willReadFrequently: true });
       if (wctx) {
         wctx.drawImage(video, 0, 0, work.width, work.height);
-        const detection = detectDocumentQuad(wctx.getImageData(0, 0, work.width, work.height));
+        const frame = wctx.getImageData(0, 0, work.width, work.height);
+        const detection = detectDocumentQuad(frame);
+        focusRef.current = detection ? estimateFocus(frame, detection.quad) : 0;
 
         if (detection) {
           const inv = 1 / scale;
@@ -145,22 +158,40 @@ export const CameraScannerModal: React.FC<CameraScannerModalProps> = ({
               })) as Quad)
             : scaled;
 
+          const steady = stableCountRef.current >= STABLE_FRAMES_REQUIRED;
+          const focused = focusRef.current >= FOCUS_MIN;
+
+          // Track how long the page has been steady but still soft.
+          if (steady && !focused) {
+            if (waitingForFocusSinceRef.current === 0) waitingForFocusSinceRef.current = now;
+          } else {
+            waitingForFocusSinceRef.current = 0;
+          }
+          const stuckOnFocus =
+            waitingForFocusSinceRef.current > 0 && now - waitingForFocusSinceRef.current > FOCUS_HINT_AFTER_MS;
+
           setStableProgress(stableCountRef.current / STABLE_FRAMES_REQUIRED);
           setHint(
-            stableCountRef.current < STABLE_FRAMES_REQUIRED
+            !steady
               ? 'Bill detected — hold steady'
+              : !focused
+              ? stuckOnFocus
+                ? 'Still blurry — tap the shutter to capture anyway'
+                : 'Hold steady — focusing…'
               : autoCaptureRef.current
               ? 'Capturing…'
               : 'Bill in focus — tap the shutter'
           );
 
-          if (autoCaptureRef.current && stableCountRef.current >= STABLE_FRAMES_REQUIRED) {
+          // Never fire the shutter on a frame that has not come into focus.
+          if (autoCaptureRef.current && steady && focused) {
             doCapture();
             return;
           }
         } else {
           quadRef.current = null;
           stableCountRef.current = 0;
+          waitingForFocusSinceRef.current = 0;
           setStableProgress(0);
           setHint('Place the bill on a contrasting surface');
         }
@@ -175,8 +206,10 @@ export const CameraScannerModal: React.FC<CameraScannerModalProps> = ({
     const quad = quadRef.current;
     if (!quad) return;
 
-    const locked = stableCountRef.current >= STABLE_FRAMES_REQUIRED;
-    const accent = locked ? '#22c55e' : '#00A3E0';
+    // Green means ready; amber means steady but still soft.
+    const steady = stableCountRef.current >= STABLE_FRAMES_REQUIRED;
+    const locked = steady && focusRef.current >= FOCUS_MIN;
+    const accent = locked ? '#22c55e' : steady ? '#f59e0b' : '#00A3E0';
     const unit = Math.max(2, overlay.width / 320);
 
     ctx.beginPath();
@@ -184,7 +217,11 @@ export const CameraScannerModal: React.FC<CameraScannerModalProps> = ({
     for (let i = 1; i < 4; i++) ctx.lineTo(quad[i].x, quad[i].y);
     ctx.closePath();
 
-    ctx.fillStyle = locked ? 'rgba(34,197,94,0.18)' : 'rgba(0,163,224,0.14)';
+    ctx.fillStyle = locked
+      ? 'rgba(34,197,94,0.18)'
+      : steady
+      ? 'rgba(245,158,11,0.16)'
+      : 'rgba(0,163,224,0.14)';
     ctx.fill();
     ctx.strokeStyle = accent;
     ctx.lineWidth = unit * 1.6;
@@ -235,6 +272,8 @@ export const CameraScannerModal: React.FC<CameraScannerModalProps> = ({
       capturedRef.current = false;
       stableCountRef.current = 0;
       quadRef.current = null;
+      focusRef.current = 0;
+      waitingForFocusSinceRef.current = 0;
 
       if (rafRef.current === null) rafRef.current = requestAnimationFrame(tick);
     } catch (err) {

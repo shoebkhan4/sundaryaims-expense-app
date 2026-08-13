@@ -78,6 +78,116 @@ function downscaleToGray(src: ImageData, targetW: number): GrayImage {
   return { gray, w, h, scale };
 }
 
+interface RgbImage {
+  r: Uint8Array;
+  g: Uint8Array;
+  b: Uint8Array;
+  w: number;
+  h: number;
+  scale: number;
+}
+
+/** Box-filter downscale keeping colour, which luminance-only detection loses. */
+function downscaleToRgb(src: ImageData, targetW: number): RgbImage {
+  const scale = Math.min(1, targetW / src.width);
+  const w = Math.max(1, Math.round(src.width * scale));
+  const h = Math.max(1, Math.round(src.height * scale));
+  const r = new Uint8Array(w * h);
+  const g = new Uint8Array(w * h);
+  const b = new Uint8Array(w * h);
+  const data = src.data;
+
+  const xStep = src.width / w;
+  const yStep = src.height / h;
+
+  for (let y = 0; y < h; y++) {
+    const sy0 = Math.floor(y * yStep);
+    const sy1 = Math.max(sy0 + 1, Math.floor((y + 1) * yStep));
+    for (let x = 0; x < w; x++) {
+      const sx0 = Math.floor(x * xStep);
+      const sx1 = Math.max(sx0 + 1, Math.floor((x + 1) * xStep));
+      let sr = 0, sg = 0, sb = 0, n = 0;
+      for (let sy = sy0; sy < sy1; sy++) {
+        let idx = (sy * src.width + sx0) * 4;
+        for (let sx = sx0; sx < sx1; sx++) {
+          sr += data[idx];
+          sg += data[idx + 1];
+          sb += data[idx + 2];
+          idx += 4;
+          n++;
+        }
+      }
+      const i = y * w + x;
+      r[i] = n ? sr / n : 0;
+      g[i] = n ? sg / n : 0;
+      b[i] = n ? sb / n : 0;
+    }
+  }
+  return { r, g, b, w, h, scale };
+}
+
+/**
+ * How far each pixel's colour is from the surface the document lies on,
+ * measured as chromaticity so it does not move with the light.
+ *
+ * A white receipt on a cream worktop can match the table in brightness — under
+ * a light falloff the shaded end of the paper is no brighter than the lit end
+ * of the table — and luminance-only detection then finds nothing. The hue
+ * difference survives, because dividing by (R+G+B) cancels the illumination.
+ */
+function chromaDistanceFromSurface(rgb: RgbImage): Uint8Array {
+  const { r, g, b, w, h } = rgb;
+  const n = w * h;
+
+  const chromaR = new Float32Array(n);
+  const chromaG = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const sum = r[i] + g[i] + b[i] || 1;
+    chromaR[i] = r[i] / sum;
+    chromaG[i] = g[i] / sum;
+  }
+
+  // The frame border is the surface: documents are framed, not bled off the edge.
+  const ringR: number[] = [];
+  const ringG: number[] = [];
+  const step = Math.max(1, Math.floor(Math.min(w, h) / 60));
+  const sample = (i: number) => { ringR.push(chromaR[i]); ringG.push(chromaG[i]); };
+  for (let x = 0; x < w; x += step) { sample(x); sample((h - 1) * w + x); }
+  for (let y = 0; y < h; y += step) { sample(y * w); sample(y * w + w - 1); }
+  if (ringR.length < 8) return new Uint8Array(n);
+
+  const median = (values: number[]) => {
+    const sorted = values.slice().sort((p, q) => p - q);
+    return sorted[sorted.length >> 1];
+  };
+  const surfaceR = median(ringR);
+  const surfaceG = median(ringG);
+
+  // 0.08 of chromaticity is a strong colour difference; scale that to full range.
+  const out = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    const d = Math.hypot(chromaR[i] - surfaceR, chromaG[i] - surfaceG);
+    out[i] = Math.min(255, Math.round((d / 0.08) * 255));
+  }
+  return out;
+}
+
+/** Segments the document by colour difference from the surface around it. */
+function quadFromChromaContrast(distance: Uint8Array, w: number, h: number): Quad | null {
+  const t = Math.max(18, otsuThreshold(distance));
+  const mask = new Uint8Array(w * h);
+  let foreground = 0;
+  for (let i = 0; i < mask.length; i++) {
+    if (distance[i] > t) {
+      mask[i] = 1;
+      foreground++;
+    }
+  }
+  // Everything or nothing differs: the split carries no information.
+  if (foreground < w * h * 0.08 || foreground > w * h * 0.9) return null;
+  return quadFromMask(mask, w, h);
+}
+
 /** Summed-area table for O(1) rectangular means. */
 function integralImage(src: Uint8Array | Float32Array, w: number, h: number): Float64Array {
   const ii = new Float64Array((w + 1) * (h + 1));
@@ -600,34 +710,67 @@ export function detectDocumentQuad(src: ImageData): DetectionResult | null {
 
   const blurred = boxBlurGray(gray, w, h, 2);
   const mag = sobelMagnitude(blurred, w, h);
-  const edgeThreshold = Math.max(18, percentileThreshold(mag, 0.9));
 
-  const candidates: Quad[] = [];
+  /** Scores a set of candidates against a gradient field, keeping the best. */
+  const pickBest = (candidates: Quad[], field: Float32Array, threshold: number) => {
+    let best: Quad | null = null;
+    let bestScore = 0;
+
+    for (const quad of candidates) {
+      const clamped = quad.map((p) => ({
+        x: Math.min(w - 1, Math.max(0, p.x)),
+        y: Math.min(h - 1, Math.max(0, p.y))
+      })) as Quad;
+
+      if (!isPlausibleQuad(clamped, w, h)) continue;
+
+      const support = edgeSupport(clamped, field, threshold, w, h);
+      // Prefer larger pages when edge support is comparable.
+      const areaRatio = polygonArea(clamped) / (w * h);
+      const score = support * (0.75 + 0.25 * Math.min(1, areaRatio / 0.6));
+
+      if (score > bestScore) {
+        bestScore = score;
+        best = clamped;
+      }
+    }
+    return { best, bestScore };
+  };
+
+  const lumaThreshold = Math.max(18, percentileThreshold(mag, 0.9));
+  const lumaCandidates: Quad[] = [];
   const bright = quadFromRegion(blurred, w, h, true);
-  if (bright) candidates.push(bright);
+  if (bright) lumaCandidates.push(bright);
   const dark = quadFromRegion(blurred, w, h, false);
-  if (dark) candidates.push(dark);
-  candidates.push(...quadsFromHough(mag, w, h, edgeThreshold));
+  if (dark) lumaCandidates.push(dark);
+  lumaCandidates.push(...quadsFromHough(mag, w, h, lumaThreshold));
 
-  let best: Quad | null = null;
-  let bestScore = 0;
+  let { best, bestScore } = pickBest(lumaCandidates, mag, lumaThreshold);
 
-  for (const quad of candidates) {
-    const clamped = quad.map((p) => ({
-      x: Math.min(w - 1, Math.max(0, p.x)),
-      y: Math.min(h - 1, Math.max(0, p.y))
-    })) as Quad;
+  // Brightness alone was enough; skip the colour pass, which costs about as
+  // much again and only matters when the page and the surface are equally lit.
+  const CONFIDENT_WITHOUT_COLOUR = 0.75;
+  if (!best || bestScore < CONFIDENT_WITHOUT_COLOUR) {
+    const rgb = downscaleToRgb(src, DETECT_WIDTH);
+    const chroma = boxBlurGray(chromaDistanceFromSurface(rgb), w, h, 2);
+    const chromaMag = sobelMagnitude(chroma, w, h);
 
-    if (!isPlausibleQuad(clamped, w, h)) continue;
+    // An edge is an edge whether it shows in brightness or only in colour.
+    const combinedMag = new Float32Array(w * h);
+    for (let i = 0; i < combinedMag.length; i++) {
+      combinedMag[i] = Math.max(mag[i], chromaMag[i]);
+    }
+    const combinedThreshold = Math.max(18, percentileThreshold(combinedMag, 0.9));
 
-    const support = edgeSupport(clamped, mag, edgeThreshold, w, h);
-    // Prefer larger pages when edge support is comparable.
-    const areaRatio = polygonArea(clamped) / (w * h);
-    const score = support * (0.75 + 0.25 * Math.min(1, areaRatio / 0.6));
+    const colourCandidates = [...lumaCandidates];
+    const coloured = quadFromChromaContrast(chroma, w, h);
+    if (coloured) colourCandidates.push(coloured);
+    colourCandidates.push(...quadsFromHough(combinedMag, w, h, combinedThreshold));
 
-    if (score > bestScore) {
-      bestScore = score;
-      best = clamped;
+    const withColour = pickBest(colourCandidates, combinedMag, combinedThreshold);
+    if (withColour.best && withColour.bestScore > bestScore) {
+      best = withColour.best;
+      bestScore = withColour.bestScore;
     }
   }
 
@@ -638,6 +781,52 @@ export function detectDocumentQuad(src: ImageData): DetectionResult | null {
     quad: best.map((p) => ({ x: p.x * inv, y: p.y * inv })) as Quad,
     score: bestScore
   };
+}
+
+/**
+ * How sharp the document area is, as the standard deviation of its Laplacian.
+ *
+ * The auto-shutter otherwise fires on any steady outline, and a phone held
+ * still while it is still hunting focus is perfectly steady — it just produces
+ * an unreadable frame. Blur collapses this figure by more than an order of
+ * magnitude, so it separates "focused" from "focusing" cleanly.
+ */
+export function estimateFocus(src: ImageData, quad?: Quad | null): number {
+  const { gray, w, h, scale } = downscaleToGray(src, 320);
+  if (w < 16 || h < 16) return 0;
+
+  // Measure inside the page, away from the high-contrast paper edge.
+  let x0 = 0;
+  let y0 = 0;
+  let x1 = w - 1;
+  let y1 = h - 1;
+
+  if (quad) {
+    const xs = quad.map((p) => p.x * scale);
+    const ys = quad.map((p) => p.y * scale);
+    const insetX = (Math.max(...xs) - Math.min(...xs)) * 0.12;
+    const insetY = (Math.max(...ys) - Math.min(...ys)) * 0.12;
+    x0 = Math.max(0, Math.round(Math.min(...xs) + insetX));
+    x1 = Math.min(w - 1, Math.round(Math.max(...xs) - insetX));
+    y0 = Math.max(0, Math.round(Math.min(...ys) + insetY));
+    y1 = Math.min(h - 1, Math.round(Math.max(...ys) - insetY));
+  }
+  if (x1 - x0 < 8 || y1 - y0 < 8) return 0;
+
+  let sum = 0;
+  let sumSq = 0;
+  let n = 0;
+  for (let y = Math.max(1, y0); y < Math.min(h - 1, y1); y++) {
+    for (let x = Math.max(1, x0); x < Math.min(w - 1, x1); x++) {
+      const i = y * w + x;
+      const lap = 4 * gray[i] - gray[i - 1] - gray[i + 1] - gray[i - w] - gray[i + w];
+      sum += lap;
+      sumSq += lap * lap;
+      n++;
+    }
+  }
+  if (n === 0) return 0;
+  return Math.sqrt(Math.max(0, sumSq / n - (sum / n) ** 2));
 }
 
 /** Full-frame quad, used when nothing is detected or the user cancels a crop. */
