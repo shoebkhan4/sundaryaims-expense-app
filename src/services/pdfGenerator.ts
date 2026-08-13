@@ -201,8 +201,17 @@ export async function generateF2SummaryPdf(
 
       let cx = margin;
       // Date Range Column
-      const dateText = rowData.dateRange.length > 18 ? rowData.dateRange.substring(0, 16) + '...' : rowData.dateRange;
-      doc.text(dateText || '', cx + 1.5, y + 3.3);
+      // ISO dates and ranges overflow this column and used to be cut off
+      // mid-year ("2026-08-11 to 20..."). Shorten, then shrink to fit.
+      const dateText = formatDateCell(rowData.dateRange);
+      const dateWidth = columns[0].width - 3;
+      let dateFontSize = 7.5;
+      while (dateFontSize > 5 && doc.getTextWidth(dateText) > dateWidth) {
+        dateFontSize -= 0.5;
+        doc.setFontSize(dateFontSize);
+      }
+      doc.text(dateText, cx + 1.5, y + 3.3);
+      doc.setFontSize(7.5);
       cx += columns[0].width;
 
       // Description Column (Point-wise listed descriptions)
@@ -726,6 +735,40 @@ export async function generateCompiledBillsPdf(
     base64,
     sheets: sheetSummaries
   };
+}
+
+const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** "2026-08-11" -> "11 Aug 26"; parts are kept so nothing has to be cut off. */
+function shortDate(iso: string): { day: string; month: string; year: string } | null {
+  const m = iso.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  const month = SHORT_MONTHS[Number(m[2]) - 1];
+  if (!month) return null;
+  return { day: String(Number(m[3])).padStart(2, '0'), month, year: m[1].slice(2) };
+}
+
+/**
+ * Compacts the date cell so a full range still fits the column: a single date
+ * becomes "11 Aug 26", a range inside one month "11-14 Aug 26", and a range
+ * across months "11 Aug - 03 Sep".
+ */
+function formatDateCell(dateRange: string): string {
+  const parts = dateRange.split(/\s+to\s+/i).map((p) => p.trim()).filter(Boolean);
+
+  if (parts.length === 1) {
+    const d = shortDate(parts[0]);
+    return d ? `${d.day} ${d.month} ${d.year}` : parts[0];
+  }
+
+  const from = shortDate(parts[0]);
+  const to = shortDate(parts[parts.length - 1]);
+  if (!from || !to) return dateRange;
+
+  if (from.month === to.month && from.year === to.year) {
+    return `${from.day}-${to.day} ${from.month} ${from.year}`;
+  }
+  return `${from.day} ${from.month} - ${to.day} ${to.month}`;
 }
 
 function formatDateForFileName(dateStr?: string): string {

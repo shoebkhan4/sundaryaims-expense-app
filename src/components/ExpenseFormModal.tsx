@@ -71,6 +71,48 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
 
+  /**
+   * Load the row being edited every time the dialog opens.
+   *
+   * useState initialisers only run on the component's first mount, and this
+   * dialog stays mounted between openings (it renders null while closed). So
+   * without this the fields kept whatever was last typed and every "edit"
+   * showed the previously entered expense instead of the chosen row.
+   */
+  useEffect(() => {
+    if (!isOpen) return;
+
+    setDate(initialValues?.date || new Date().toISOString().split('T')[0]);
+    setDescription(initialValues?.description || '');
+    setJobNo(initialValues?.jobNo || '12918');
+    setCategory(initialValues?.category || 'Electricity water fuel');
+
+    setOriginalCurrency(initialValues?.originalCurrency || 'SAR');
+    setUsdAmount(initialValues?.originalAmount ? String(initialValues.originalAmount) : '');
+    setConversionRate(initialValues?.conversionRate ? String(initialValues.conversionRate) : '3.75');
+    setSarAmount(initialValues?.amount ? String(initialValues.amount) : '');
+
+    setRawUploadedImage(initialValues?.receiptImage);
+    setReceiptImage(initialValues?.receiptImage);
+    setReceiptFileName(initialValues?.receiptFileName);
+    setIsPdfFile(initialValues?.receiptFileName?.toLowerCase().endsWith('.pdf') || false);
+
+    setScanQuad(null);
+    setScanMode('color');
+    setRotationDeg(0);
+    setEdgesDetected(false);
+
+    setIsCameraOpen(false);
+    setCropSource(null);
+    setIsScanning(false);
+    setIsProcessingImage(false);
+    setOcrDetectedAmount(null);
+    setRawOcrText(initialValues?.rawOcrText || '');
+    setAmountOptions([]);
+    setShowOcrText(false);
+    // Keyed on the row's identity so switching rows reloads the fields.
+  }, [isOpen, initialValues?.id]);
+
   // Auto calculate SAR amount ONLY when in USD mode
   useEffect(() => {
     if (originalCurrency === 'USD') {

@@ -640,6 +640,52 @@ export function detectDocumentQuad(src: ImageData): DetectionResult | null {
   };
 }
 
+/**
+ * How sharp the document area is, as the standard deviation of its Laplacian.
+ *
+ * The auto-shutter otherwise fires on any steady outline, and a phone held
+ * still while it is still hunting focus is perfectly steady — it just produces
+ * an unreadable frame. Blur collapses this figure by more than an order of
+ * magnitude, so it separates "focused" from "focusing" cleanly.
+ */
+export function estimateFocus(src: ImageData, quad?: Quad | null): number {
+  const { gray, w, h, scale } = downscaleToGray(src, 320);
+  if (w < 16 || h < 16) return 0;
+
+  // Measure inside the page, away from the high-contrast paper edge.
+  let x0 = 0;
+  let y0 = 0;
+  let x1 = w - 1;
+  let y1 = h - 1;
+
+  if (quad) {
+    const xs = quad.map((p) => p.x * scale);
+    const ys = quad.map((p) => p.y * scale);
+    const insetX = (Math.max(...xs) - Math.min(...xs)) * 0.12;
+    const insetY = (Math.max(...ys) - Math.min(...ys)) * 0.12;
+    x0 = Math.max(0, Math.round(Math.min(...xs) + insetX));
+    x1 = Math.min(w - 1, Math.round(Math.max(...xs) - insetX));
+    y0 = Math.max(0, Math.round(Math.min(...ys) + insetY));
+    y1 = Math.min(h - 1, Math.round(Math.max(...ys) - insetY));
+  }
+  if (x1 - x0 < 8 || y1 - y0 < 8) return 0;
+
+  let sum = 0;
+  let sumSq = 0;
+  let n = 0;
+  for (let y = Math.max(1, y0); y < Math.min(h - 1, y1); y++) {
+    for (let x = Math.max(1, x0); x < Math.min(w - 1, x1); x++) {
+      const i = y * w + x;
+      const lap = 4 * gray[i] - gray[i - 1] - gray[i + 1] - gray[i - w] - gray[i + w];
+      sum += lap;
+      sumSq += lap * lap;
+      n++;
+    }
+  }
+  if (n === 0) return 0;
+  return Math.sqrt(Math.max(0, sumSq / n - (sum / n) ** 2));
+}
+
 /** Full-frame quad, used when nothing is detected or the user cancels a crop. */
 export function fullFrameQuad(w: number, h: number): Quad {
   return [
