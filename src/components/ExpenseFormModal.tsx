@@ -3,6 +3,7 @@ import { X, Sparkles, Check, RefreshCw, FileText, DollarSign, Calculator, Crop, 
 import { ExpenseCategory, ExpenseItem } from '../types/expense';
 import { scanReceiptImage } from '../services/ocrService';
 import { autoScanImage, EnhanceMode, Quad } from '../services/documentScanner';
+import { readPdfBill } from '../services/pdfReader';
 import { CameraScannerModal } from './CameraScannerModal';
 import { DocumentCropEditor } from './DocumentCropEditor';
 
@@ -179,6 +180,25 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
     await runOcr(result.ocrDataUrl);
   };
 
+  /** Last resort for image-only PDFs: some are named "... SAR 250.pdf". */
+  const applyAmountFromFileName = (fileName: string) => {
+    const amtMatch = fileName.match(/(?:SAR|USD|\$|Amount|_)\s*(\d+(?:\.\d+)?)/i);
+    if (!amtMatch || !amtMatch[1]) return;
+
+    const parsed = parseFloat(amtMatch[1]);
+    if (!isFinite(parsed) || parsed <= 0) return;
+
+    if (fileName.includes('$') || fileName.toLowerCase().includes('usd')) {
+      setOriginalCurrency('USD');
+      setUsdAmount(String(parsed));
+      setSarAmount((parsed * 3.75).toFixed(2));
+    } else {
+      setOriginalCurrency('SAR');
+      setOcrDetectedAmount(parsed);
+      setSarAmount(String(parsed));
+    }
+  };
+
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     // Allow re-picking the same file (change does not fire otherwise).
@@ -190,22 +210,42 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
     setIsPdfFile(isPdf);
 
     if (isPdf) {
+      // Read the document itself. The file name is only a fallback for bills
+      // that are a scanned image with no text layer.
       setIsScanning(true);
-      const fname = file.name;
-      const amtMatch = fname.match(/(?:SAR|USD|\$|Amount|_)\s*(\d+(?:\.\d+)?)/i);
-      if (amtMatch && amtMatch[1]) {
-        const pAmt = parseFloat(amtMatch[1]);
-        if (fname.includes('$') || fname.toLowerCase().includes('usd')) {
-          setOriginalCurrency('USD');
-          setUsdAmount(String(pAmt));
-          setSarAmount((pAmt * 3.75).toFixed(2));
-        } else {
-          setOriginalCurrency('SAR');
-          setOcrDetectedAmount(pAmt);
-          setSarAmount(String(pAmt));
+      try {
+        const pdf = await readPdfBill(file);
+
+        if (pdf.pageImage) {
+          setReceiptImage(pdf.pageImage);
+          setRawUploadedImage(pdf.pageImage);
         }
+        if (pdf.rawText) setRawOcrText(pdf.rawText);
+        setAmountOptions(pdf.amountOptions ?? []);
+
+        if (pdf.amount !== undefined) {
+          if (pdf.currencyHint === 'USD') {
+            setOriginalCurrency('USD');
+            setUsdAmount(String(pdf.amount));
+            setSarAmount((pdf.amount * 3.75).toFixed(2));
+          } else {
+            setOriginalCurrency('SAR');
+            setOcrDetectedAmount(pdf.amount);
+            setSarAmount(String(pdf.amount));
+          }
+        } else {
+          applyAmountFromFileName(file.name);
+        }
+
+        if (pdf.date) setDate(pdf.date);
+        if (pdf.vendor && !description) setDescription(pdf.vendor);
+        if (pdf.category) setCategory(pdf.category);
+      } catch (err) {
+        console.error('Could not read the PDF:', err);
+        applyAmountFromFileName(file.name);
+      } finally {
+        setIsScanning(false);
       }
-      setIsScanning(false);
     } else {
       const reader = new FileReader();
       reader.onload = async (event) => {
