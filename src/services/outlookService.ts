@@ -329,12 +329,19 @@ export type ShareOutcome = 'shared' | 'cancelled' | 'unsupported';
  * Hands both PDFs to the system share sheet, which is the one route from a web
  * page to a mail app that keeps the files attached. Picking Outlook there
  * opens a new message with both PDFs already on it.
+ *
+ * Two things a share cannot do, by design of the Web Share API rather than any
+ * choice here: it carries no recipients, and Outlook ignores `title`, taking
+ * the first line of the shared text as the subject instead. So the subject is
+ * put on that first line — otherwise the mail is subjected "Dear Accounts,"
+ * and lands outside the thread accounts follows.
  */
 export async function shareReportFiles(
   files: File[],
   subject: string,
   body: string
 ): Promise<ShareOutcome> {
+  const text = `${subject}\n\n${body}`;
   const canShare =
     typeof navigator !== 'undefined' &&
     typeof navigator.share === 'function' &&
@@ -344,7 +351,7 @@ export async function shareReportFiles(
   if (!canShare) return 'unsupported';
 
   try {
-    await navigator.share({ files, title: subject, text: body });
+    await navigator.share({ files, title: subject, text });
     return 'shared';
   } catch (err) {
     // Dismissing the share sheet rejects; that is not a failure worth reporting.
