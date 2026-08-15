@@ -418,8 +418,22 @@ function groupExpensesByCategory(expenses: ExpenseItem[]): { dateRange: string; 
     const maxDate = dates[dates.length - 1];
     const dateRange = minDate === maxDate ? minDate : `${minDate} to ${maxDate}`;
 
-    // Point-wise description (no + sign) e.g. "1. Site Fuel (6 Visit); 2. Petrol Fill-up"
-    const descriptionsPointWise = items.map((i, idx) => `${idx + 1}. ${i.description}`).join('; ');
+    // Point-wise description, one entry per distinct description. Repeating
+    // "1. Site Fuel; 2. Site Fuel; 3. Site Fuel" wastes the column and tells the
+    // approver nothing, so identical entries collapse and carry a count.
+    const byDescription = new Map<string, { text: string; count: number }>();
+    items.forEach((i) => {
+      const text = (i.description || '').trim();
+      if (!text) return;
+      const key = text.toLowerCase();
+      const seen = byDescription.get(key);
+      if (seen) seen.count += 1;
+      else byDescription.set(key, { text, count: 1 });
+    });
+
+    const descriptionsPointWise = Array.from(byDescription.values())
+      .map((entry, idx) => `${idx + 1}. ${entry.text}${entry.count > 1 ? ` (x${entry.count})` : ''}`)
+      .join('; ');
 
     // Unique Job numbers
     const jobNos = Array.from(new Set(items.map(i => i.jobNo).filter(j => j && j !== '-'))).join(', ') || '-';

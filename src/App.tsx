@@ -8,6 +8,7 @@ import { F2PdfPreviewModal } from './components/F2PdfPreviewModal';
 import { OutlookModal } from './components/OutlookModal';
 import { HistoryDrawer } from './components/HistoryDrawer';
 import { ConfirmDialog } from './components/ConfirmDialog';
+import { clearStoredExpenses, loadExpenses, loadReceiptImages, persistExpenses } from './services/expenseStorage';
 import { Send, FileText, Sparkles, Building2, UserCheck, Calendar, Edit3, RotateCcw, Layers } from 'lucide-react';
 import { AIMS_LOGO_BASE64 } from './assets/images';
 
@@ -35,10 +36,13 @@ function detectExpenseTypeSummary(items: ExpenseItem[]): string {
 
   items.forEach(item => {
     if (!item.date) return;
-    const d = new Date(item.date);
-    if (isNaN(d.getTime())) return;
-    const year = d.getFullYear();
-    const monthIdx = d.getMonth();
+    // Read the parts directly: `new Date('2026-09-01')` is UTC midnight, and
+    // getMonth() is local, which slips to the previous month west of Greenwich.
+    const parts = item.date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!parts) return;
+    const year = Number(parts[1]);
+    const monthIdx = Number(parts[2]) - 1;
+    if (monthIdx < 0 || monthIdx > 11) return;
     if (!monthsMap[year]) monthsMap[year] = new Set();
     monthsMap[year].add(monthIdx);
   });
@@ -59,19 +63,58 @@ export default function App() {
     return saved ? JSON.parse(saved) : INITIAL_HEADER_INFO;
   });
 
-  const [expenses, setExpenses] = useState<ExpenseItem[]>(() => {
-    const saved = localStorage.getItem('aims_expenses');
-    return saved ? JSON.parse(saved) : [];
-  });
+  // The list paints immediately; the receipt images arrive from IndexedDB just
+  // after, because they are far too large for localStorage.
+  const [expenses, setExpenses] = useState<ExpenseItem[]>(() => loadExpenses());
+
+  useEffect(() => {
+    let cancelled = false;
+    const saved = loadExpenses();
+    if (saved.length === 0) return;
+
+    loadReceiptImages(saved.map((e) => e.id)).then((images) => {
+      if (cancelled || images.size === 0) return;
+      // Merged by id rather than replacing the list, so anything added while
+      // the images were loading survives.
+      setExpenses((prev) =>
+        prev.map((expense) =>
+          expense.receiptImage ? expense : { ...expense, receiptImage: images.get(expense.id) }
+        )
+      );
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const [isEditingTitle, setIsEditingTitle] = useState(false);
 
+  /**
+   * Whether the report title was typed by hand. The title is derived from the
+   * months the expenses fall in, but that derivation used to run on every
+   * change to the list, so a title the user had corrected was overwritten the
+   * next time anything was added or edited.
+   */
+  const [isTitleManual, setIsTitleManual] = useState<boolean>(() => {
+    return localStorage.getItem('aims_title_manual') === '1';
+  });
+
   useEffect(() => {
+    try {
+      localStorage.setItem('aims_title_manual', isTitleManual ? '1' : '0');
+    } catch {
+      // Persistence failures are surfaced by the expense save below.
+    }
+  }, [isTitleManual]);
+
+  useEffect(() => {
+    if (isTitleManual) return;
     if (expenses.length > 0) {
       const autoTitle = detectExpenseTypeSummary(expenses);
       setHeaderInfo(prev => ({ ...prev, expenseTypeSummary: autoTitle }));
     }
-  }, [expenses]);
+  }, [expenses, isTitleManual]);
 
   useEffect(() => {
     try {
@@ -81,12 +124,18 @@ export default function App() {
     }
   }, [headerInfo]);
 
+  /** Set when the browser refuses to persist, so the user is not left thinking
+   *  their work is saved when it is not. */
+  const [storageError, setStorageError] = useState(false);
+
   useEffect(() => {
-    try {
-      localStorage.setItem('aims_expenses', JSON.stringify(expenses));
-    } catch (e) {
-      console.warn('localStorage save failed for expenses', e);
-    }
+    let cancelled = false;
+    persistExpenses(expenses).then((result) => {
+      if (!cancelled) setStorageError(!result.ok);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [expenses]);
 
   // Modals state
@@ -112,13 +161,14 @@ export default function App() {
   };
 
   const resetReport = () => {
+    setIsTitleManual(false);
     setHeaderInfo({
       ...INITIAL_HEADER_INFO,
       dateSubmitted: new Date().toISOString().split('T')[0],
       expenseTypeSummary: 'Sundry expenses August 2026'
     });
     setExpenses([]);
-    localStorage.removeItem('aims_expenses');
+    void clearStoredExpenses();
   };
 
   const handleSaveExpense = (newExpenseData: Omit<ExpenseItem, 'id'>) => {
@@ -159,6 +209,14 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
       
+      {/* Persistence is silent when it works; it must not be silent when it fails. */}
+      {storageError && (
+        <div className="bg-rose-600/90 text-white text-xs font-semibold px-4 py-2 text-center">
+          This device is out of storage space, so recent changes are not being saved.
+          Send or download this report, then start a new one to free space.
+        </div>
+      )}
+
       {/* Sticky Header Navbar with AIMS Logo */}
       <Navbar
         onOpenAddModal={() => {
@@ -225,7 +283,10 @@ export default function App() {
                     type="text"
                     autoFocus
                     value={headerInfo.expenseTypeSummary}
-                    onChange={(e) => handleUpdateHeaderInfo({ expenseTypeSummary: e.target.value })}
+                    onChange={(e) => {
+                      setIsTitleManual(true);
+                      handleUpdateHeaderInfo({ expenseTypeSummary: e.target.value });
+                    }}
                     onBlur={() => setIsEditingTitle(false)}
                     onKeyDown={(e) => e.key === 'Enter' && setIsEditingTitle(false)}
                     className="w-full text-xl sm:text-2xl font-black text-white bg-slate-950 border border-[#00A3E0] rounded-xl px-3 py-1 focus:outline-none shadow-inner"

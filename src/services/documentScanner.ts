@@ -398,6 +398,145 @@ function maxAreaQuad(hull: Point[]): Quad | null {
   return best;
 }
 
+/** A line as a unit normal and offset: n·p = c. */
+interface FittedLine {
+  nx: number;
+  ny: number;
+  c: number;
+}
+
+/** Total-least-squares line through the points, with one outlier-rejection pass. */
+function fitLine(points: Point[]): FittedLine | null {
+  if (points.length < 4) return null;
+
+  const fit = (pts: Point[]): FittedLine | null => {
+    const n = pts.length;
+    let mx = 0;
+    let my = 0;
+    for (const p of pts) {
+      mx += p.x;
+      my += p.y;
+    }
+    mx /= n;
+    my /= n;
+
+    let sxx = 0;
+    let syy = 0;
+    let sxy = 0;
+    for (const p of pts) {
+      const dx = p.x - mx;
+      const dy = p.y - my;
+      sxx += dx * dx;
+      syy += dy * dy;
+      sxy += dx * dy;
+    }
+    // Principal direction is the larger eigenvector of the covariance matrix.
+    const theta = 0.5 * Math.atan2(2 * sxy, sxx - syy);
+    const dirX = Math.cos(theta);
+    const dirY = Math.sin(theta);
+    const nx = -dirY;
+    const ny = dirX;
+    if (!isFinite(nx) || !isFinite(ny)) return null;
+    return { nx, ny, c: nx * mx + ny * my };
+  };
+
+  const first = fit(points);
+  if (!first) return null;
+
+  // Drop the points that clearly do not belong to this edge, then refit.
+  const residuals = points.map((p) => Math.abs(first.nx * p.x + first.ny * p.y - first.c));
+  const sorted = residuals.slice().sort((a, b) => a - b);
+  const median = sorted[sorted.length >> 1];
+  const limit = Math.max(1.5, median * 2.5);
+  const kept = points.filter((_, i) => residuals[i] <= limit);
+
+  return kept.length >= Math.max(4, points.length * 0.5) ? fit(kept) : first;
+}
+
+function intersectFittedLines(a: FittedLine, b: FittedLine): Point | null {
+  const det = a.nx * b.ny - a.ny * b.nx;
+  if (Math.abs(det) < 1e-6) return null;
+  return {
+    x: (a.c * b.ny - b.c * a.ny) / det,
+    y: (a.nx * b.c - b.nx * a.c) / det
+  };
+}
+
+/**
+ * Snaps each edge of a detected quad onto the strongest gradient beside it,
+ * then takes the corners where those edges meet.
+ *
+ * The candidate quads are the largest quadrilateral that fits *inside* a
+ * region, so wherever the page boundary is soft — a shadow along one side, a
+ * fold, a curled edge — the corner is pulled in off the paper, and where the
+ * region bleeds into a shadow the corner is pushed out past it. Fitting a line
+ * to the real edge evidence and intersecting the four lines puts the corners
+ * back where the paper actually ends, including corners the blob rounded off.
+ */
+function refineQuadEdges(
+  quad: Quad,
+  mag: Float32Array,
+  threshold: number,
+  w: number,
+  h: number
+): Quad | null {
+  const band = Math.max(3, Math.round(Math.min(w, h) * 0.035));
+  const lines: FittedLine[] = [];
+
+  for (let i = 0; i < 4; i++) {
+    const from = quad[i];
+    const to = quad[(i + 1) % 4];
+    const length = dist(from, to);
+    if (length < 8) return null;
+
+    const dirX = (to.x - from.x) / length;
+    const dirY = (to.y - from.y) / length;
+    const normalX = -dirY;
+    const normalY = dirX;
+
+    const points: Point[] = [];
+    const steps = Math.max(12, Math.round(length));
+    for (let s = 0; s <= steps; s++) {
+      const t = s / steps;
+      const px = from.x + (to.x - from.x) * t;
+      const py = from.y + (to.y - from.y) * t;
+
+      // Strongest edge evidence on the line crossing this point.
+      let bestMag = threshold;
+      let bestOffset: number | null = null;
+      for (let k = -band; k <= band; k++) {
+        const x = Math.round(px + normalX * k);
+        const y = Math.round(py + normalY * k);
+        if (x < 0 || y < 0 || x >= w || y >= h) continue;
+        const m = mag[y * w + x];
+        if (m > bestMag) {
+          bestMag = m;
+          bestOffset = k;
+        }
+      }
+      if (bestOffset !== null) {
+        points.push({ x: px + normalX * bestOffset, y: py + normalY * bestOffset });
+      }
+    }
+
+    // Too little of this edge was found to trust a fit.
+    if (points.length < steps * 0.5) return null;
+
+    const line = fitLine(points);
+    if (!line) return null;
+    lines.push(line);
+  }
+
+  const corners: Point[] = [];
+  for (let i = 0; i < 4; i++) {
+    const corner = intersectFittedLines(lines[(i + 3) % 4], lines[i]);
+    if (!corner) return null;
+    corners.push(corner);
+  }
+
+  return corners as Quad;
+}
+
 /** Reorders four corners clockwise beginning at the top-left one. */
 export function orderCorners(pts: Point[]): Quad {
   const cx = (pts[0].x + pts[1].x + pts[2].x + pts[3].x) / 4;
@@ -746,6 +885,10 @@ export function detectDocumentQuad(src: ImageData): DetectionResult | null {
   lumaCandidates.push(...quadsFromHough(mag, w, h, lumaThreshold));
 
   let { best, bestScore } = pickBest(lumaCandidates, mag, lumaThreshold);
+  // The gradient field the winning candidate was judged against, reused below
+  // to snap its edges onto the real boundary.
+  let bestField = mag;
+  let bestThreshold = lumaThreshold;
 
   // Brightness alone was enough; skip the colour pass, which costs about as
   // much again and only matters when the page and the surface are equally lit.
@@ -771,10 +914,29 @@ export function detectDocumentQuad(src: ImageData): DetectionResult | null {
     if (withColour.best && withColour.bestScore > bestScore) {
       best = withColour.best;
       bestScore = withColour.bestScore;
+      bestField = combinedMag;
+      bestThreshold = combinedThreshold;
     }
   }
 
   if (!best || bestScore < 0.55) return null;
+
+  // Put the corners on the paper's actual edges rather than inside the blob.
+  const refined = refineQuadEdges(best, bestField, bestThreshold, w, h);
+  if (refined) {
+    const clamped = refined.map((p) => ({
+      x: Math.min(w - 1, Math.max(0, p.x)),
+      y: Math.min(h - 1, Math.max(0, p.y))
+    })) as Quad;
+
+    // Refinement corrects a corner; it never relocates the document.
+    const diagonal = Math.hypot(w, h);
+    const moved = quadDrift(best, clamped, diagonal);
+    if (moved < 0.12 && isPlausibleQuad(clamped, w, h)) {
+      const refinedScore = edgeSupport(clamped, bestField, bestThreshold, w, h);
+      if (refinedScore >= bestScore * 0.9) best = clamped;
+    }
+  }
 
   const inv = 1 / scale;
   return {

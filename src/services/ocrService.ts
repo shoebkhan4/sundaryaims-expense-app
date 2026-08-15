@@ -28,6 +28,38 @@ function normalizeArabicNumerals(str: string): string {
   return res;
 }
 
+/**
+ * Turns receipt text into form fields. Shared by image OCR and by PDF text
+ * extraction, so a PDF bill is read the same way a photographed one is.
+ */
+export function parseReceiptText(text: string, confidence = 0): OcrResult {
+  const normalizedText = normalizeArabicNumerals(text);
+
+  const isUsd =
+    normalizedText.includes('$') ||
+    normalizedText.toLowerCase().includes('usd') ||
+    normalizedText.toLowerCase().includes('dollar');
+  const currencyHint: 'SAR' | 'USD' = isUsd ? 'USD' : 'SAR';
+
+  const candidates = extractAmountCandidates(normalizedText);
+  const parsedAmount = extractArabicSarTotalAmount(normalizedText);
+
+  return {
+    amount: parsedAmount,
+    amountOptions: candidates
+      .filter((c) => c.value !== parsedAmount && (c.value % 1 !== 0 || c.score >= 40))
+      .sort((a, b) => b.value - a.value)
+      .map((c) => c.value)
+      .slice(0, 5),
+    date: extractDate(normalizedText),
+    vendor: extractVendor(normalizedText),
+    category: autoDetectCategory(normalizedText),
+    currencyHint,
+    rawText: text,
+    confidence
+  };
+}
+
 export async function scanReceiptImage(imageSrc: string | File): Promise<OcrResult> {
   try {
     const imageUrl = typeof imageSrc === 'string' ? imageSrc : URL.createObjectURL(imageSrc);
@@ -49,35 +81,8 @@ export async function scanReceiptImage(imageSrc: string | File): Promise<OcrResu
       confidence = data.confidence || 0;
     }
 
-    const normalizedText = normalizeArabicNumerals(text);
+    return parseReceiptText(text, confidence);
 
-    // Detect currency hint
-    const isUsd = normalizedText.includes('$') || normalizedText.toLowerCase().includes('usd') || normalizedText.toLowerCase().includes('dollar');
-    const currencyHint: 'SAR' | 'USD' = isUsd ? 'USD' : 'SAR';
-
-    const candidates = extractAmountCandidates(normalizedText);
-    const parsedAmount = extractArabicSarTotalAmount(normalizedText);
-    const parsedCategory = autoDetectCategory(normalizedText);
-    const parsedDate = extractDate(normalizedText);
-    const parsedVendor = extractVendor(normalizedText);
-
-    return {
-      amount: parsedAmount,
-      // Offer the other monetary values, largest first — a mis-read total is
-      // usually corrected to one of the bigger figures on the bill. Bare
-      // integers (pump numbers, item counts) are dropped unless labelled.
-      amountOptions: candidates
-        .filter((c) => c.value !== parsedAmount && (c.value % 1 !== 0 || c.score >= 40))
-        .sort((a, b) => b.value - a.value)
-        .map((c) => c.value)
-        .slice(0, 5),
-      date: parsedDate,
-      vendor: parsedVendor,
-      category: parsedCategory,
-      currencyHint,
-      rawText: text,
-      confidence
-    };
   } catch (err) {
     console.error('OCR Processing error:', err);
     return {
