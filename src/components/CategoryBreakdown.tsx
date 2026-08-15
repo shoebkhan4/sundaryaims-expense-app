@@ -122,7 +122,8 @@ export const CategoryBreakdown: React.FC<CategoryBreakdownProps> = ({
       {/* Advance & Previous Balance Inputs */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-slate-800/80 text-xs">
         <div>
-          <label className="block text-slate-400 font-semibold mb-1 text-[11px]">Advance Received from Company (SAR)</label>
+          {/* Labelled exactly as on the F2 form itself. */}
+          <label className="block text-slate-400 font-semibold mb-1 text-[11px]">Advance from Company</label>
           <input
             type="number"
             value={headerInfo.advanceFromCompany}
@@ -132,9 +133,9 @@ export const CategoryBreakdown: React.FC<CategoryBreakdownProps> = ({
         </div>
 
         <div>
-          {/* What the company still owes from earlier sheets; it is carried
-              into the total on the submission email. */}
-          <label className="block text-slate-400 font-semibold mb-1 text-[11px]">Previous Due Balance (SAR)</label>
+          {/* The F2 form's own wording; this figure is carried into the total
+              on the submission email. */}
+          <label className="block text-slate-400 font-semibold mb-1 text-[11px]">Bank Balance / previous bal</label>
           <input
             type="number"
             value={headerInfo.previousBalance}

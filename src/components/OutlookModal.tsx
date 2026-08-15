@@ -287,7 +287,7 @@ export const OutlookModal: React.FC<OutlookModalProps> = ({
                 <span className="font-semibold text-slate-100">SAR {grandTotal.toFixed(2)}</span>
               </div>
               <div className="flex items-center justify-between text-slate-300">
-                <span>Previous due balance</span>
+                <span>Bank Balance / previous bal</span>
                 <span className="font-semibold text-slate-100">SAR {previousBalance.toFixed(2)}</span>
               </div>
               <div className="flex items-center justify-between pt-1 border-t border-slate-700/60 text-slate-200">
