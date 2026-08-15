@@ -24,6 +24,30 @@ export interface PastReportRecord {
 
 export const PAST_2026_REPORTS: PastReportRecord[] = [
   {
+    // Sent 9 Aug 2026 on the "Petty expenses summary sheet." thread, SAR 1393,
+    // with no previous balance outstanding.
+    id: 'report-august-2026',
+    periodTitle: 'Sundry expenses July 2026',
+    dateSubmitted: '2026-08-08',
+    totalAmount: 1393,
+    pdfFileName: 'Shoeb_SUNDRY EXPENSES_ 08- Aug-2026_SAR1393.pdf',
+    headerInfo: {
+      companyName: 'HADAF AL AIMS TRADING CO.',
+      formName: 'AIMS F2 FORM (SAUDI RIYALS)',
+      employeeName: 'Shoeb Ali Khan',
+      badgeNo: 'xx',
+      placeSite: 'KSA',
+      currency: 'SAR',
+      expenseTypeSummary: 'Sundry expenses July 2026',
+      approverName: 'Leela Venkat',
+      dateSubmitted: '2026-08-08',
+      advanceFromCompany: 0,
+      previousBalance: 0,
+      cashInHand: 0
+    },
+    items: []
+  },
+  {
     id: 'report-june-2026',
     periodTitle: 'Sundry expenses April, May, June 2026',
     dateSubmitted: '2026-06-27',
@@ -133,40 +157,92 @@ export const PAST_2026_REPORTS: PastReportRecord[] = [
   }
 ];
 
-// MSAL Configuration
-const msalConfig: Configuration = {
-  auth: {
-    clientId: '00000000-0000-0000-0000-000000000000',
-    authority: 'https://login.microsoftonline.com/common',
-    redirectUri: window.location.origin
-  },
-  cache: {
-    cacheLocation: 'sessionStorage',
-    storeAuthStateInCookie: false
-  }
-};
+/* ------------------------------------------------------------------ *
+ * Signing in to the company mailbox
+ *
+ * A web page cannot choose which account the phone's mail app sends from —
+ * that app uses its own default, which is why reports went out from a
+ * personal address. The only way to send *as* the company account is to sign
+ * in to it here and post the mail through Microsoft Graph.
+ *
+ * That needs an app registration in the aimsgt.com tenant, whose client id is
+ * supplied as VITE_MS_CLIENT_ID at build time. The authority deliberately
+ * defaults to "organizations", which offers work and school accounts only, so
+ * a personal Microsoft account cannot be picked by mistake.
+ * ------------------------------------------------------------------ */
+
+const MS_CLIENT_ID = import.meta.env.VITE_MS_CLIENT_ID?.trim() || '';
+const MS_TENANT = import.meta.env.VITE_MS_TENANT_ID?.trim() || 'organizations';
+const MAIL_SCOPES = ['User.Read', 'Mail.Send'];
+
+/** True when this build carries a company app registration. */
+export function isGraphConfigured(): boolean {
+  return MS_CLIENT_ID.length > 0;
+}
+
+// Built on demand rather than at import time, so this module can be loaded
+// (and its pure helpers tested) without a browser window present.
+function msalConfig(): Configuration {
+  return {
+    auth: {
+      clientId: MS_CLIENT_ID,
+      authority: `https://login.microsoftonline.com/${MS_TENANT}`,
+      redirectUri: window.location.origin
+    },
+    cache: {
+      cacheLocation: 'localStorage',
+      storeAuthStateInCookie: false
+    }
+  };
+}
 
 let msalInstance: PublicClientApplication | null = null;
 
 export async function getMsalInstance(): Promise<PublicClientApplication> {
   if (!msalInstance) {
-    msalInstance = new PublicClientApplication(msalConfig);
+    msalInstance = new PublicClientApplication(msalConfig());
     await msalInstance.initialize();
   }
   return msalInstance;
 }
 
-export async function loginOutlook(): Promise<string | null> {
+/** The signed-in company address, or null when nobody is signed in. */
+export async function getSignedInAddress(): Promise<string | null> {
+  if (!isGraphConfigured()) return null;
   try {
     const msal = await getMsalInstance();
-    const loginResponse = await msal.loginPopup({
-      scopes: ['User.Read', 'Mail.Read', 'Mail.Send']
-    });
-    return loginResponse.accessToken;
-  } catch (err) {
-    console.error('MSAL Login error:', err);
+    const account = msal.getAllAccounts()[0];
+    return account?.username || null;
+  } catch {
     return null;
   }
+}
+
+/** A token for sending, reusing the existing session when there is one. */
+export async function getMailToken(interactive: boolean): Promise<string | null> {
+  if (!isGraphConfigured()) return null;
+  const msal = await getMsalInstance();
+  const account = msal.getAllAccounts()[0];
+
+  if (account) {
+    try {
+      const silent = await msal.acquireTokenSilent({ scopes: MAIL_SCOPES, account });
+      if (silent.accessToken) return silent.accessToken;
+    } catch {
+      // The session expired; fall through to signing in again.
+    }
+  }
+
+  if (!interactive) return null;
+  const result = await msal.loginPopup({ scopes: MAIL_SCOPES, prompt: 'select_account' });
+  return result.accessToken || null;
+}
+
+export async function signOutOutlook(): Promise<void> {
+  if (!isGraphConfigured()) return;
+  const msal = await getMsalInstance();
+  const account = msal.getAllAccounts()[0];
+  if (account) await msal.clearCache({ account });
 }
 
 export async function fetchSentExpenseEmails(accessToken?: string): Promise<OutlookSubmission[]> {
@@ -193,7 +269,7 @@ export async function sendExpenseEmailViaGraph(
     attachments: { name: string; base64: string }[];
   }
 ): Promise<boolean> {
-  try {
+  {
     const client = Client.init({
       authProvider: (done) => done(null, accessToken)
     });
@@ -218,16 +294,75 @@ export async function sendExpenseEmailViaGraph(
       }))
     };
 
+    // Errors are deliberately left to the caller: a send that failed used to
+    // be swallowed and reported as a fallback that never happened.
     await client.api('/me/sendMail').post({ message, saveToSentItems: true });
     return true;
-  } catch (err) {
-    console.error('Failed to send mail via Outlook Graph API:', err);
-    return false;
   }
 }
 
-export function generateMailtoUrl(subject: string, body: string): string {
-  const toStr = DEFAULT_RECIPIENTS.to.join(',');
-  const ccStr = DEFAULT_RECIPIENTS.cc.join(',');
-  return `mailto:${toStr}?cc=${encodeURIComponent(ccStr)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+/* ------------------------------------------------------------------ *
+ * Handing the report to the phone's mail app
+ * ------------------------------------------------------------------ */
+
+/**
+ * A mailto: link can carry recipients and text but never a file — no mail
+ * client on any platform accepts attachments this way. Anything sent through
+ * here has to have its PDFs added by hand.
+ */
+export function generateMailtoUrl(
+  to: string[],
+  cc: string[],
+  subject: string,
+  body: string
+): string {
+  // Each address is escaped on its own: escaping the joined string turns the
+  // separating commas into %2C, which some clients read as one long address.
+  const toStr = to.map(encodeURIComponent).join(',');
+  const ccStr = cc.map(encodeURIComponent).join(',');
+  return `mailto:${toStr}?cc=${ccStr}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+}
+
+export type ShareOutcome = 'shared' | 'cancelled' | 'unsupported';
+
+/**
+ * Hands both PDFs to the system share sheet, which is the one route from a web
+ * page to a mail app that keeps the files attached. Picking Outlook there
+ * opens a new message with both PDFs already on it.
+ */
+export async function shareReportFiles(
+  files: File[],
+  subject: string,
+  body: string
+): Promise<ShareOutcome> {
+  const canShare =
+    typeof navigator !== 'undefined' &&
+    typeof navigator.share === 'function' &&
+    typeof navigator.canShare === 'function' &&
+    navigator.canShare({ files });
+
+  if (!canShare) return 'unsupported';
+
+  try {
+    await navigator.share({ files, title: subject, text: body });
+    return 'shared';
+  } catch (err) {
+    // Dismissing the share sheet rejects; that is not a failure worth reporting.
+    if (err instanceof DOMException && err.name === 'AbortError') return 'cancelled';
+    throw err;
+  }
+}
+
+/** Saves both PDFs, so they can be attached by hand as a last resort. */
+export function downloadReportFiles(files: File[]): void {
+  files.forEach((file) => {
+    const url = URL.createObjectURL(file);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = file.name;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  });
 }

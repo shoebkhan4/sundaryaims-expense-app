@@ -12,6 +12,14 @@ import { clearStoredExpenses, loadExpenses, loadReceiptImages, persistExpenses }
 import { Send, FileText, Sparkles, Building2, UserCheck, Calendar, Edit3, RotateCcw, Layers } from 'lucide-react';
 import { AIMS_LOGO_BASE64 } from './assets/images';
 
+/** Today, in the local timezone, as YYYY-MM-DD. */
+function todayIso(): string {
+  const now = new Date();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${now.getFullYear()}-${month}-${day}`;
+}
+
 const INITIAL_HEADER_INFO: CompanyHeaderInfo = {
   companyName: 'HADAF AL AIMS TRADING CO.',
   formName: 'AIMS F2 FORM (SAUDI RIYALS)',
@@ -21,7 +29,7 @@ const INITIAL_HEADER_INFO: CompanyHeaderInfo = {
   currency: 'SAR',
   expenseTypeSummary: 'Sundry expenses August 2026',
   approverName: 'Leela Venkat',
-  dateSubmitted: new Date().toISOString().split('T')[0],
+  dateSubmitted: todayIso(),
   advanceFromCompany: 0,
   previousBalance: 0,
   cashInHand: 0,
@@ -60,7 +68,11 @@ function detectExpenseTypeSummary(items: ExpenseItem[]): string {
 export default function App() {
   const [headerInfo, setHeaderInfo] = useState<CompanyHeaderInfo>(() => {
     const saved = localStorage.getItem('aims_header_info');
-    return saved ? JSON.parse(saved) : INITIAL_HEADER_INFO;
+    if (!saved) return INITIAL_HEADER_INFO;
+    // The expense date is the day the form is submitted, so it starts each
+    // session on today rather than staying on whatever day the report was
+    // begun. It remains editable, and an edit holds for the session.
+    return { ...(JSON.parse(saved) as CompanyHeaderInfo), dateSubmitted: todayIso() };
   });
 
   // The list paints immediately; the receipt images arrive from IndexedDB just
@@ -164,7 +176,7 @@ export default function App() {
     setIsTitleManual(false);
     setHeaderInfo({
       ...INITIAL_HEADER_INFO,
-      dateSubmitted: new Date().toISOString().split('T')[0],
+      dateSubmitted: todayIso(),
       expenseTypeSummary: 'Sundry expenses August 2026'
     });
     setExpenses([]);

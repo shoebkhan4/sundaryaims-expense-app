@@ -646,8 +646,12 @@ export async function generateCompiledBillsPdf(
     format: 'a4'
   });
 
-  const formattedDate = formatDateForFileName(headerInfo.dateSubmitted);
-  const fileName = `Shoeb_SUNDRY EXPENSES_ ${formattedDate}_Compiled_Bills.pdf`;
+  // Named the way accounts has received it for years — "Shoeb_Bills_08 Aug
+  // 2026_SAR 1393.pdf" — rather than the amount-less "_Compiled_Bills".
+  const billsTotal = expenses.reduce((sum, item) => sum + item.amount, 0);
+  const fileName = `Shoeb_Bills_${formatBillsDateForFileName(headerInfo.dateSubmitted)}_SAR ${Math.round(
+    billsTotal
+  )}.pdf`;
 
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
@@ -791,6 +795,18 @@ function formatDateCell(dateRange: string): string {
     return `${from.day}-${to.day} ${from.month} ${from.year}`;
   }
   return `${from.day} ${from.month} - ${to.day} ${to.month}`;
+}
+
+/** "08 Aug 2026", as the bills attachment has always been named. */
+function formatBillsDateForFileName(dateStr?: string): string {
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const parts = (dateStr || '').split('-');
+  if (parts.length === 3) {
+    const [year, month, day] = parts;
+    const name = months[parseInt(month, 10) - 1];
+    if (name) return `${day} ${name} ${year}`;
+  }
+  return '08 Aug 2026';
 }
 
 function formatDateForFileName(dateStr?: string): string {
