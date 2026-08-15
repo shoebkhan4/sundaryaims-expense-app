@@ -60,7 +60,9 @@ export const OutlookModal: React.FC<OutlookModalProps> = ({
 
     setSubject('RE: Petty expenses summary sheet.');
     setEmailBody(
-      `Dear Accounts,\n\nPlease find attached last month bills.\n\nNew Expense (Unpaid): SAR ${grandTotal.toFixed(
+      // Period-neutral wording, taken from the June submission: these sheets go
+      // out weekly as often as monthly, so the mail must not claim a month.
+      `Dear Accounts,\n\nPlease find attached new expense.\n\nNew Expense (Unpaid): SAR ${grandTotal.toFixed(
         0
       )}\nPrevious Balance (Unpaid): SAR ${previousBalance.toFixed(0)}\n\n${totalLine}\n\nRegards,\nShoeb`
     );
