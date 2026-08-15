@@ -1,6 +1,7 @@
 import jsPDF from 'jspdf';
 import { CompanyHeaderInfo, ExpenseItem } from '../types/expense';
 import { AIMS_LOGO_BASE64, SHOEB_SIGNATURE_BASE64, LEELA_SIGNATURE_BASE64 } from '../assets/images';
+import { hydrateReceiptImages } from './expenseStorage';
 
 export async function generateF2SummaryPdf(
   headerInfo: CompanyHeaderInfo,
@@ -580,7 +581,10 @@ function drawBillCell(
     doc.rect(areaX, areaY, areaW, areaH, 'FD');
     doc.setFontSize(8);
     doc.setTextColor(150, 150, 150);
-    doc.text('No bill image attached', areaX + areaW / 2, areaY + areaH / 2 - 1, { align: 'center' });
+    // A file name with no image means the file itself was never kept — only
+    // its name — so say that rather than claiming nothing was attached.
+    const line = item.receiptFileName ? 'Bill file not stored — re-attach it' : 'No bill image attached';
+    doc.text(line, areaX + areaW / 2, areaY + areaH / 2 - 1, { align: 'center' });
     if (item.receiptFileName) {
       doc.setFontSize(7);
       const name = doc.splitTextToSize(item.receiptFileName, areaW - 4)[0] || '';
@@ -630,8 +634,12 @@ export interface BillSheetSummary {
 
 export async function generateCompiledBillsPdf(
   headerInfo: CompanyHeaderInfo,
-  expenses: ExpenseItem[]
+  expensesIn: ExpenseItem[]
 ): Promise<{ pdfBlob: Blob; fileName: string; base64: string; sheets: BillSheetSummary[] }> {
+  // Pull in any bill image still sitting in IndexedDB, so opening this straight
+  // after the app loads does not print sheets full of "No bill image attached".
+  const expenses = await hydrateReceiptImages(expensesIn);
+
   const doc = new jsPDF({
     orientation: 'portrait',
     unit: 'mm',

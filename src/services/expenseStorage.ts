@@ -124,6 +124,27 @@ export async function loadReceiptImages(ids: string[]): Promise<Map<string, stri
   return found;
 }
 
+/**
+ * Fills in any image that is stored but not yet in memory.
+ *
+ * The list paints from localStorage while the images are still coming out of
+ * IndexedDB. Anything that draws bills — the compiled bills PDF above all —
+ * must not depend on having been opened late enough for that to have finished,
+ * or every bill prints "No bill image attached" purely because the user was
+ * quick. Rows that already carry their image are returned untouched.
+ */
+export async function hydrateReceiptImages(expenses: ExpenseItem[]): Promise<ExpenseItem[]> {
+  const missing = expenses.filter((e) => !e.receiptImage).map((e) => e.id);
+  if (missing.length === 0) return expenses;
+
+  const images = await loadReceiptImages(missing);
+  if (images.size === 0) return expenses;
+
+  return expenses.map((expense) =>
+    expense.receiptImage ? expense : { ...expense, receiptImage: images.get(expense.id) }
+  );
+}
+
 /** Images already written, so unchanged ones are not rewritten on every edit. */
 const writtenImages = new Map<string, string>();
 
