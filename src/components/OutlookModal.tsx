@@ -41,13 +41,8 @@ export const OutlookModal: React.FC<OutlookModalProps> = ({
   const [subject, setSubject] = useState('RE: Petty expenses summary sheet.');
   const [emailBody, setEmailBody] = useState('');
 
-  /**
-   * What the company still owes for earlier sheets. Deliberately separate from
-   * the F2 form's "Previous Bank Balance", which is a cash reconciliation
-   * figure and not the same number.
-   */
-  const [previousUnpaid, setPreviousUnpaid] = useState('0');
-  const previousBalance = parseFloat(previousUnpaid) || 0;
+  // Taken from the Previous Due Balance on the form, so the two never disagree.
+  const previousBalance = headerInfo.previousBalance || 0;
 
   /**
    * Written afresh each time the dialog opens. This component stays mounted
@@ -285,23 +280,22 @@ export const OutlookModal: React.FC<OutlookModalProps> = ({
               />
             </div>
 
-            {/* Still owed from earlier sheets — the figure accounts acts on */}
-            <div>
-              <label className="block text-slate-300 font-semibold mb-1">
-                Previous Balance Still Unpaid (SAR)
-              </label>
-              <input
-                type="number"
-                min="0"
-                step="1"
-                inputMode="decimal"
-                value={previousUnpaid}
-                onChange={(e) => setPreviousUnpaid(e.target.value)}
-                className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-200 font-medium focus:outline-none focus:border-blue-500"
-              />
-              <p className="text-[10px] text-slate-500 mt-1">
-                Left over from earlier sheets. Added to this report in the message below.
-              </p>
+            {/* What is being claimed, so the totals are checkable before sending */}
+            <div className="p-3 rounded-xl bg-slate-850 border border-slate-700/60 space-y-1">
+              <div className="flex items-center justify-between text-slate-300">
+                <span>This report ({headerInfo.dateSubmitted})</span>
+                <span className="font-semibold text-slate-100">SAR {grandTotal.toFixed(2)}</span>
+              </div>
+              <div className="flex items-center justify-between text-slate-300">
+                <span>Previous due balance</span>
+                <span className="font-semibold text-slate-100">SAR {previousBalance.toFixed(2)}</span>
+              </div>
+              <div className="flex items-center justify-between pt-1 border-t border-slate-700/60 text-slate-200">
+                <span className="font-semibold">Total unpaid</span>
+                <span className="font-bold text-emerald-400">
+                  SAR {(previousBalance + grandTotal).toFixed(2)}
+                </span>
+              </div>
             </div>
 
             {/* Subject */}
@@ -340,7 +334,7 @@ export const OutlookModal: React.FC<OutlookModalProps> = ({
                 </div>
 
                 <div className="flex items-center justify-between text-slate-300 bg-slate-800/80 px-3 py-1.5 rounded-lg border border-slate-700/40">
-                  <span className="font-mono truncate">2. Compiled Bills PDF ({expenses.filter(e => e.receiptImage).length} Receipts)</span>
+                  <span className="font-mono truncate">2. Bills PDF: Shoeb_Bills_{headerInfo.dateSubmitted}_SAR {Math.round(grandTotal)}.pdf</span>
                   <span className="text-blue-400 font-bold shrink-0">{expenses.filter(e => e.receiptImage).length} Images</span>
                 </div>
               </div>

@@ -132,7 +132,9 @@ export const CategoryBreakdown: React.FC<CategoryBreakdownProps> = ({
         </div>
 
         <div>
-          <label className="block text-slate-400 font-semibold mb-1 text-[11px]">Previous Bank Balance (SAR)</label>
+          {/* What the company still owes from earlier sheets; it is carried
+              into the total on the submission email. */}
+          <label className="block text-slate-400 font-semibold mb-1 text-[11px]">Previous Due Balance (SAR)</label>
           <input
             type="number"
             value={headerInfo.previousBalance}
