@@ -14,6 +14,32 @@ interface ExpenseFormModalProps {
   initialValues?: ExpenseItem | null;
 }
 
+/** Site the crew is working on; the descriptions read "Site food UGP (4 person)". */
+const DEFAULT_SITE = 'UGP';
+const SITE_SUGGESTIONS = ['UGP'];
+
+/** Categories whose description is composed from the site and head count. */
+const FOOD_CATEGORY: ExpenseCategory = 'Site Food';
+const FUEL_CATEGORY: ExpenseCategory = 'Electricity water fuel';
+
+/** "Site food UGP (4 person)" / "Site fuel UGP". */
+export function composeSiteDescription(
+  category: ExpenseCategory,
+  site: string,
+  personCount?: number
+): string | null {
+  const place = site.trim();
+  if (!place) return null;
+
+  if (category === FOOD_CATEGORY) {
+    return personCount && personCount > 0
+      ? `Site food ${place} (${personCount} person)`
+      : `Site food ${place}`;
+  }
+  if (category === FUEL_CATEGORY) return `Site fuel ${place}`;
+  return null;
+}
+
 const CATEGORIES: ExpenseCategory[] = [
   'Electricity water fuel',
   'Site Food',
@@ -36,6 +62,12 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
   const [description, setDescription] = useState(initialValues?.description || '');
   const [jobNo, setJobNo] = useState(initialValues?.jobNo || '12918');
   const [category, setCategory] = useState<ExpenseCategory>(initialValues?.category || 'Electricity water fuel');
+
+  /** Site and head count drive the description for food and fuel bills. */
+  const [site, setSite] = useState<string>(initialValues?.site || DEFAULT_SITE);
+  const [personCount, setPersonCount] = useState<string>(
+    initialValues?.personCount ? String(initialValues.personCount) : ''
+  );
   
   // Currency mode (SAR by default)
   const [originalCurrency, setOriginalCurrency] = useState<'SAR' | 'USD'>(initialValues?.originalCurrency || 'SAR');
@@ -83,10 +115,22 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
   useEffect(() => {
     if (!isOpen) return;
 
+    const openCategory = initialValues?.category || 'Electricity water fuel';
+    const openSite = initialValues?.site || DEFAULT_SITE;
+    const openPersonCount = initialValues?.personCount;
+
     setDate(initialValues?.date || new Date().toISOString().split('T')[0]);
-    setDescription(initialValues?.description || '');
     setJobNo(initialValues?.jobNo || '12918');
-    setCategory(initialValues?.category || 'Electricity water fuel');
+    setCategory(openCategory);
+    setSite(openSite);
+    setPersonCount(openPersonCount ? String(openPersonCount) : '');
+    // Seeded here as well as in the effect below, because reopening the dialog
+    // does not change the inputs the composition depends on.
+    setDescription(
+      initialValues?.description ||
+        composeSiteDescription(openCategory, openSite, openPersonCount) ||
+        ''
+    );
 
     setOriginalCurrency(initialValues?.originalCurrency || 'SAR');
     setUsdAmount(initialValues?.originalAmount ? String(initialValues.originalAmount) : '');
@@ -113,6 +157,17 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
     setShowOcrText(false);
     // Keyed on the row's identity so switching rows reloads the fields.
   }, [isOpen, initialValues?.id]);
+
+  /**
+   * Food and fuel bills carry a standard description built from the site and,
+   * for food, the number of people it covered. It is written into the field
+   * rather than only into the PDF, so what is submitted is what is on screen,
+   * and it stays editable for anything unusual.
+   */
+  useEffect(() => {
+    const composed = composeSiteDescription(category, site, parseInt(personCount, 10) || undefined);
+    if (composed) setDescription(composed);
+  }, [category, site, personCount]);
 
   // Auto calculate SAR amount ONLY when in USD mode
   useEffect(() => {
@@ -316,6 +371,8 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
       originalCurrency,
       originalAmount: originalCurrency === 'USD' ? (isNaN(pUsdAmount) ? undefined : pUsdAmount) : undefined,
       conversionRate: originalCurrency === 'USD' ? (isNaN(pConvRate) ? 3.75 : pConvRate) : undefined,
+      site: site.trim() || undefined,
+      personCount: category === FOOD_CATEGORY ? parseInt(personCount, 10) || undefined : undefined,
       receiptImage,
       receiptFileName,
       rawOcrText
@@ -575,6 +632,49 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
               ))}
             </select>
           </div>
+
+          {/* Site, and head count for food — these compose the description */}
+          {(category === FOOD_CATEGORY || category === FUEL_CATEGORY) && (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  Site <span className="text-rose-400">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  list="site-suggestions"
+                  placeholder="e.g. UGP"
+                  value={site}
+                  onChange={(e) => setSite(e.target.value)}
+                  className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-cyan-500 font-medium"
+                />
+                <datalist id="site-suggestions">
+                  {SITE_SUGGESTIONS.map((option) => (
+                    <option key={option} value={option} />
+                  ))}
+                </datalist>
+              </div>
+
+              {category === FOOD_CATEGORY && (
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">
+                    No. of persons
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    inputMode="numeric"
+                    placeholder="e.g. 4"
+                    value={personCount}
+                    onChange={(e) => setPersonCount(e.target.value)}
+                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-cyan-500 font-medium"
+                  />
+                </div>
+              )}
+            </div>
+          )}
 
           {/* CLEAN AMOUNT INPUT (SAR by default) */}
           {originalCurrency === 'SAR' ? (

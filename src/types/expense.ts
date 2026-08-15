@@ -21,6 +21,10 @@ export interface ExpenseItem {
   conversionRate?: number; // e.g. 3.75
   receiptImage?: string; // base64 or object URL
   receiptFileName?: string;
+  /** Site the expense belongs to, e.g. UGP. Drives the composed description. */
+  site?: string;
+  /** How many people a site-food bill covered. */
+  personCount?: number;
   accountCode?: string;
   finEntity?: string;
   rawOcrText?: string;
