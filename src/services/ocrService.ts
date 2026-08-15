@@ -376,6 +376,7 @@ function autoDetectCategory(text: string): ExpenseCategory {
 export function extractDate(text: string, today: Date = new Date()): string | undefined {
   const lines = text.split('\n');
   const candidates: { iso: string; score: number }[] = [];
+  const order = detectDateOrder(text);
 
   const oldest = new Date(today.getTime());
   oldest.setFullYear(oldest.getFullYear() - 2);
@@ -399,15 +400,24 @@ export function extractDate(text: string, today: Date = new Date()): string | un
       }
     }
 
-    // Day-first: 11.08.2026, 12/08/26
+    // Written month: "11 Aug 2026", "Aug 11, 2026", "11 أغسطس 2026".
+    for (const named of namedMonthDates(line, today)) {
+      if (isPlausible(named)) {
+        candidates.push({ iso: named, score: 70 + (labelled ? 20 : 0) + (hasTime ? 15 : 0) });
+      }
+    }
+
+    // All-numeric: 11.08.2026, 12/08/26, and the month-first form.
     for (const m of line.matchAll(/\b(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})\b/g)) {
       const first = Number(m[1]);
       const second = Number(m[2]);
       const yearRaw = m[3];
 
       for (const year of expandYear(yearRaw, today)) {
-        let day = first;
-        let month = second;
+        // Follow the order the document itself uses; day-first otherwise,
+        // which is how bills are printed here.
+        let day = order === 'monthFirst' ? second : first;
+        let month = order === 'monthFirst' ? first : second;
         if (day > 12 && month > 12) continue;
         if (day > 31 || (month > 12 && day <= 12)) {
           [day, month] = [month, day];
@@ -428,6 +438,80 @@ export function extractDate(text: string, today: Date = new Date()): string | un
 
   candidates.sort((a, b) => b.score - a.score);
   return candidates[0].iso;
+}
+
+/**
+ * Which way round a document writes its numeric dates.
+ *
+ * Bills here are day/month/year, but the same three numbers can be either
+ * order, and a receipt read as month-first files an August expense in November.
+ * When any date on the document is unambiguous — a first field above twelve can
+ * only be a day, a second field above twelve can only be a day — that settles
+ * the order for the ambiguous dates beside it. With nothing to go on, day-first
+ * is assumed, which is how bills are printed here.
+ */
+function detectDateOrder(text: string): 'dayFirst' | 'monthFirst' {
+  let dayFirst = 0;
+  let monthFirst = 0;
+
+  for (const m of text.matchAll(/\b(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})\b/g)) {
+    const first = Number(m[1]);
+    const second = Number(m[2]);
+    if (first > 12 && second <= 12) dayFirst++;
+    else if (second > 12 && first <= 12) monthFirst++;
+  }
+
+  return monthFirst > dayFirst ? 'monthFirst' : 'dayFirst';
+}
+
+const MONTH_NAMES: Record<string, number> = {
+  jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+  jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
+  // Arabic calendar month names as printed on Saudi invoices.
+  'يناير': 1, 'فبراير': 2, 'مارس': 3, 'أبريل': 4, 'ابريل': 4, 'مايو': 5, 'يونيو': 6,
+  'يوليو': 7, 'أغسطس': 8, 'اغسطس': 8, 'سبتمبر': 9, 'أكتوبر': 10, 'اكتوبر': 10,
+  'نوفمبر': 11, 'ديسمبر': 12
+};
+
+function monthFromName(raw: string): number | undefined {
+  const key = raw.trim().toLowerCase();
+  if (MONTH_NAMES[key] !== undefined) return MONTH_NAMES[key];
+  const short = key.slice(0, 3);
+  return MONTH_NAMES[short];
+}
+
+/** Dates written with the month spelled out: "11 Aug 2026", "Aug 11, 2026". */
+function namedMonthDates(line: string, today: Date): string[] {
+  const found: string[] = [];
+  const monthWord = '[A-Za-z\\u0600-\\u06FF]{3,10}';
+
+  // Day first: 11 Aug 2026 / 11-أغسطس-2026
+  for (const m of line.matchAll(new RegExp(`\\b(\\d{1,2})\\s*[-/ ]\\s*(${monthWord})\\s*[-/, ]\\s*(\\d{2,4})\\b`, 'g'))) {
+    const month = monthFromName(m[2]);
+    if (!month) continue;
+    for (const year of expandYear(m[3], today)) {
+      const iso = buildIsoDate(year, month, Number(m[1]));
+      if (iso) {
+        found.push(iso);
+        break;
+      }
+    }
+  }
+
+  // Month first: Aug 11, 2026
+  for (const m of line.matchAll(new RegExp(`\\b(${monthWord})\\s+(\\d{1,2})\\s*[-/, ]\\s*(\\d{2,4})\\b`, 'g'))) {
+    const month = monthFromName(m[1]);
+    if (!month) continue;
+    for (const year of expandYear(m[3], today)) {
+      const iso = buildIsoDate(year, month, Number(m[2]));
+      if (iso) {
+        found.push(iso);
+        break;
+      }
+    }
+  }
+
+  return found;
 }
 
 /** Two-digit years resolve to whichever century lands nearest today. */
