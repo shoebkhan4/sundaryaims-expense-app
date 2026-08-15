@@ -65,6 +65,8 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
 
   /** Site and head count drive the description for food and fuel bills. */
   const [site, setSite] = useState<string>(initialValues?.site || DEFAULT_SITE);
+  /** The last description this dialog wrote itself, so it can take it back. */
+  const composedDescriptionRef = useRef<string | null>(null);
   const [personCount, setPersonCount] = useState<string>(
     initialValues?.personCount ? String(initialValues.personCount) : ''
   );
@@ -99,6 +101,8 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
   /** Other totals found on the bill, offered as one-tap corrections. */
   const [amountOptions, setAmountOptions] = useState<number[]>([]);
   const [showOcrText, setShowOcrText] = useState(false);
+  /** Told to the user when a PDF could not be read or rendered on this device. */
+  const [pdfNotice, setPdfNotice] = useState<string | null>(null);
 
   // Fallback camera input (used when getUserMedia is unavailable) + gallery picker
   const cameraInputRef = useRef<HTMLInputElement>(null);
@@ -126,11 +130,9 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
     setPersonCount(openPersonCount ? String(openPersonCount) : '');
     // Seeded here as well as in the effect below, because reopening the dialog
     // does not change the inputs the composition depends on.
-    setDescription(
-      initialValues?.description ||
-        composeSiteDescription(openCategory, openSite, openPersonCount) ||
-        ''
-    );
+    const seeded = composeSiteDescription(openCategory, openSite, openPersonCount);
+    setDescription(initialValues?.description || seeded || '');
+    composedDescriptionRef.current = initialValues?.description ? null : seeded;
 
     setOriginalCurrency(initialValues?.originalCurrency || 'SAR');
     setUsdAmount(initialValues?.originalAmount ? String(initialValues.originalAmount) : '');
@@ -155,6 +157,7 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
     setRawOcrText(initialValues?.rawOcrText || '');
     setAmountOptions([]);
     setShowOcrText(false);
+    setPdfNotice(null);
     // Keyed on the row's identity so switching rows reloads the fields.
   }, [isOpen, initialValues?.id]);
 
@@ -166,7 +169,17 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
    */
   useEffect(() => {
     const composed = composeSiteDescription(category, site, parseInt(personCount, 10) || undefined);
-    if (composed) setDescription(composed);
+    if (composed) {
+      setDescription(composed);
+      composedDescriptionRef.current = composed;
+      return;
+    }
+    // Moved off food and fuel — take back the description this dialog wrote,
+    // otherwise a bill reclassified by the scan keeps a "Site fuel" label that
+    // no longer has a Site field behind it. Anything typed by hand stays.
+    const previous = composedDescriptionRef.current;
+    composedDescriptionRef.current = null;
+    if (previous) setDescription((current) => (current === previous ? '' : current));
   }, [category, site, personCount]);
 
   // Auto calculate SAR amount ONLY when in USD mode
@@ -268,12 +281,19 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
       // Read the document itself. The file name is only a fallback for bills
       // that are a scanned image with no text layer.
       setIsScanning(true);
+      setPdfNotice(null);
       try {
         const pdf = await readPdfBill(file);
 
         if (pdf.pageImage) {
           setReceiptImage(pdf.pageImage);
           setRawUploadedImage(pdf.pageImage);
+        } else {
+          // Without a page image the compiled bills PDF can only print the file
+          // name, which is what "No bill image attached" means on that sheet.
+          setPdfNotice(
+            'This PDF page could not be rendered, so the compiled bills PDF will show only the file name. Attach a photo of the bill instead.'
+          );
         }
         if (pdf.rawText) setRawOcrText(pdf.rawText);
         setAmountOptions(pdf.amountOptions ?? []);
@@ -290,6 +310,13 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
           }
         } else {
           applyAmountFromFileName(file.name);
+          if (!pdf.rawText.trim()) {
+            setPdfNotice(
+              (previous) =>
+                previous ??
+                'This PDF is a scan with no text in it, so the amount could not be read — type it below.'
+            );
+          }
         }
 
         if (pdf.date) setDate(pdf.date);
@@ -298,6 +325,9 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
       } catch (err) {
         console.error('Could not read the PDF:', err);
         applyAmountFromFileName(file.name);
+        setPdfNotice(
+          'This PDF could not be opened on this device. Attach a photo of the bill instead, or the compiled bills PDF will show only the file name.'
+        );
       } finally {
         setIsScanning(false);
       }
@@ -555,6 +585,12 @@ export const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({
                   <X className="w-4 h-4" />
                 </button>
               </div>
+            )}
+
+            {pdfNotice && (
+              <p className="mt-2 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-200">
+                {pdfNotice}
+              </p>
             )}
 
             {/* What the OCR actually read — the fastest way to see why a value looks wrong */}
