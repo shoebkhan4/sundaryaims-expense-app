@@ -24,6 +24,30 @@ export interface PastReportRecord {
 
 export const PAST_2026_REPORTS: PastReportRecord[] = [
   {
+    // Sent 9 Aug 2026 on the "Petty expenses summary sheet." thread, SAR 1393,
+    // with no previous balance outstanding.
+    id: 'report-august-2026',
+    periodTitle: 'Sundry expenses July 2026',
+    dateSubmitted: '2026-08-08',
+    totalAmount: 1393,
+    pdfFileName: 'Shoeb_SUNDRY EXPENSES_ 08- Aug-2026_SAR1393.pdf',
+    headerInfo: {
+      companyName: 'HADAF AL AIMS TRADING CO.',
+      formName: 'AIMS F2 FORM (SAUDI RIYALS)',
+      employeeName: 'Shoeb Ali Khan',
+      badgeNo: 'xx',
+      placeSite: 'KSA',
+      currency: 'SAR',
+      expenseTypeSummary: 'Sundry expenses July 2026',
+      approverName: 'Leela Venkat',
+      dateSubmitted: '2026-08-08',
+      advanceFromCompany: 0,
+      previousBalance: 0,
+      cashInHand: 0
+    },
+    items: []
+  },
+  {
     id: 'report-june-2026',
     periodTitle: 'Sundry expenses April, May, June 2026',
     dateSubmitted: '2026-06-27',

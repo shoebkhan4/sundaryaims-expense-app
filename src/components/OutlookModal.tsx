@@ -31,13 +31,45 @@ export const OutlookModal: React.FC<OutlookModalProps> = ({
   
   const grandTotal = expenses.reduce((s, e) => s + e.amount, 0);
 
-  const [subject, setSubject] = useState(
-    `Sundry Expenses Submission - Shoeb Ali Khan (${headerInfo.dateSubmitted}) - SAR ${Math.round(grandTotal)}`
-  );
+  /**
+   * These two match the mails that have actually been sent to accounts for
+   * years: one long thread with this subject, and a short body whose point is
+   * the running unpaid balance — the number accounts acts on. The previous
+   * wording listed the attachments back at the reader and never mentioned what
+   * was owed. Both stay editable here.
+   */
+  const [subject, setSubject] = useState('RE: Petty expenses summary sheet.');
+  const [emailBody, setEmailBody] = useState('');
 
-  const [emailBody, setEmailBody] = useState(
-    `Dear Accounts Team,\n\nPlease find attached the finalized F2 Sundry Expense Form and compiled bill receipt attachments for my recent site expenses.\n\nSummary Breakdown:\n- Employee Name: Shoeb Ali Khan\n- Date: ${headerInfo.dateSubmitted}\n- Site / Location: ${headerInfo.placeSite}\n- Total Amount: SAR ${grandTotal.toFixed(2)}\n- Total Attachments: ${expenses.filter(e => e.receiptImage).length} Bills\n\nAttachments:\n1. F2 Summary PDF: Shoeb_SUNDRY EXPENSES_ ${headerInfo.dateSubmitted}_SAR ${Math.round(grandTotal)}.pdf\n2. Compiled Bills PDF: Shoeb_SUNDRY EXPENSES_ ${headerInfo.dateSubmitted}_Compiled_Bills.pdf\n\nBest regards,\nShoeb Ali Khan\nDirector BU`
-  );
+  /**
+   * What the company still owes for earlier sheets. Deliberately separate from
+   * the F2 form's "Previous Bank Balance", which is a cash reconciliation
+   * figure and not the same number.
+   */
+  const [previousUnpaid, setPreviousUnpaid] = useState('0');
+  const previousBalance = parseFloat(previousUnpaid) || 0;
+
+  /**
+   * Written afresh each time the dialog opens. This component stays mounted
+   * between openings, and useState initialisers only run on first mount, so
+   * the body used to be built once — while the report was still empty — and
+   * then quoted SAR 0 no matter what had been added since.
+   */
+  useEffect(() => {
+    if (!isOpen) return;
+    const totalUnpaid = previousBalance + grandTotal;
+    const totalLine =
+      previousBalance > 0
+        ? `Total Unpaid: ${previousBalance.toFixed(0)}+${grandTotal.toFixed(0)}: SAR ${totalUnpaid.toFixed(0)}`
+        : `Total Unpaid: SAR ${totalUnpaid.toFixed(0)}`;
+
+    setSubject('RE: Petty expenses summary sheet.');
+    setEmailBody(
+      `Dear Accounts,\n\nPlease find attached last month bills.\n\nNew Expense (Unpaid): SAR ${grandTotal.toFixed(
+        0
+      )}\nPrevious Balance (Unpaid): SAR ${previousBalance.toFixed(0)}\n\n${totalLine}\n\nRegards,\nShoeb`
+    );
+  }, [isOpen, grandTotal, previousBalance]);
 
   const [isSending, setIsSending] = useState(false);
   const [busyLabel, setBusyLabel] = useState<string>('Sending Mail...');
@@ -251,6 +283,25 @@ export const OutlookModal: React.FC<OutlookModalProps> = ({
                 onChange={(e) => setCcInput(e.target.value)}
                 className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-200 font-mono focus:outline-none focus:border-blue-500"
               />
+            </div>
+
+            {/* Still owed from earlier sheets — the figure accounts acts on */}
+            <div>
+              <label className="block text-slate-300 font-semibold mb-1">
+                Previous Balance Still Unpaid (SAR)
+              </label>
+              <input
+                type="number"
+                min="0"
+                step="1"
+                inputMode="decimal"
+                value={previousUnpaid}
+                onChange={(e) => setPreviousUnpaid(e.target.value)}
+                className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-200 font-medium focus:outline-none focus:border-blue-500"
+              />
+              <p className="text-[10px] text-slate-500 mt-1">
+                Left over from earlier sheets. Added to this report in the message below.
+              </p>
             </div>
 
             {/* Subject */}
