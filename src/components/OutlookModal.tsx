@@ -77,6 +77,14 @@ export const OutlookModal: React.FC<OutlookModalProps> = ({
 
   /** The company address the report will be sent as, once signed in. */
   const [signedInAs, setSignedInAs] = useState<string | null>(null);
+  /**
+   * Which address list was last copied. A share carries no recipients, so they
+   * have to be pasted into Outlook by hand; copying is one tap rather than
+   * retyping five addresses. Declared with the other hooks — below the early
+   * return for a closed dialog, it changed the hook count between renders and
+   * crashed the dialog outright.
+   */
+  const [copied, setCopied] = useState<string | null>(null);
   const graphReady = isGraphConfigured();
 
   useEffect(() => {
@@ -180,7 +188,7 @@ export const OutlookModal: React.FC<OutlookModalProps> = ({
         );
       } else if (outcome === 'shared') {
         setNoticeMessage(
-          'Both PDFs were handed to the app you picked. Check the recipients there before sending.'
+          'Both PDFs went across. A share cannot carry addresses, so Outlook opens with To and CC empty — use the Copy buttons above and paste them in. The subject is the first line of the message; delete that line once Outlook has picked it up.'
         );
       }
     } catch (err) {
@@ -205,6 +213,23 @@ export const OutlookModal: React.FC<OutlookModalProps> = ({
     } finally {
       setIsSending(false);
     }
+  };
+
+  const copyAddresses = async (label: string, addresses: string[]) => {
+    const text = addresses.join('; ');
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // Older browsers and insecure origins refuse the clipboard API.
+      const field = document.createElement('textarea');
+      field.value = text;
+      document.body.appendChild(field);
+      field.select();
+      document.execCommand('copy');
+      field.remove();
+    }
+    setCopied(label);
+    setTimeout(() => setCopied((current) => (current === label ? null : current)), 2000);
   };
 
   const handleOpenMailto = () => {
@@ -262,7 +287,16 @@ export const OutlookModal: React.FC<OutlookModalProps> = ({
             
             {/* Recipient To */}
             <div>
-              <label className="block text-slate-300 font-semibold mb-1">To (Primary Recipients)</label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-slate-300 font-semibold">To (Primary Recipients)</label>
+                <button
+                  type="button"
+                  onClick={() => copyAddresses('to', toList)}
+                  className="px-2 py-0.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-sky-300 text-[10px] font-semibold transition"
+                >
+                  {copied === 'to' ? 'Copied' : 'Copy'}
+                </button>
+              </div>
               <input
                 type="text"
                 value={toInput}
@@ -273,7 +307,16 @@ export const OutlookModal: React.FC<OutlookModalProps> = ({
 
             {/* Recipient CC */}
             <div>
-              <label className="block text-slate-300 font-semibold mb-1">CC (Approver & Copy Recipients)</label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-slate-300 font-semibold">CC (Approver &amp; Copy Recipients)</label>
+                <button
+                  type="button"
+                  onClick={() => copyAddresses('cc', ccList)}
+                  className="px-2 py-0.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-sky-300 text-[10px] font-semibold transition"
+                >
+                  {copied === 'cc' ? 'Copied' : 'Copy'}
+                </button>
+              </div>
               <input
                 type="text"
                 value={ccInput}
@@ -359,9 +402,9 @@ export const OutlookModal: React.FC<OutlookModalProps> = ({
               ) : (
                 <span>
                   This build cannot sign in to <span className="font-semibold text-slate-100">aimsgt.com</span>,
-                  so it cannot choose the sending account — the mail app picks that itself. Use{' '}
-                  <span className="font-semibold text-slate-100">Share with attachments</span>, then check the
-                  From address in Outlook before sending.
+                  so it can only hand the report to Outlook rather than send it. A share carries the two PDFs
+                  but <span className="font-semibold text-slate-100">not the To and CC</span> — copy those with
+                  the buttons above and paste them in Outlook, and check the From address before sending.
                 </span>
               )}
             </div>
