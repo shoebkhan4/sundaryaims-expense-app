@@ -397,20 +397,37 @@ function mapToF2Category(cat: string): string {
 }
 
 /**
- * Group expenses by category with POINT-WISE descriptions and date range (Requirement 4)
+ * Group expenses for the form's rows.
+ *
+ * Grouped by the category chosen on each expense, not by the F2 column it
+ * totals into. The form has only five amount columns, so Site Food, Project
+ * Material, Sundry Consumable and Other all total into Sundry Consumable —
+ * grouping by the column merged them into a single row, and a visa fee, two
+ * subscriptions and a meal arrived as one unreadable line. The submitted
+ * sheets have always listed these separately (Site Food, AI Subscription and
+ * Material each had their own row on 8 Aug), which is what this restores.
  */
-function groupExpensesByCategory(expenses: ExpenseItem[]): { dateRange: string; description: string; jobNo: string; category: string; amount: number }[] {
+export function groupExpensesByCategory(expenses: ExpenseItem[]): { dateRange: string; description: string; jobNo: string; category: string; amount: number }[] {
   const groups: Record<string, ExpenseItem[]> = {};
 
   expenses.forEach(item => {
-    const f2Cat = mapToF2Category(item.category);
-    if (!groups[f2Cat]) groups[f2Cat] = [];
-    groups[f2Cat].push(item);
+    const key = item.category || 'Other';
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(item);
+  });
+
+  // Rows follow the order the categories appear in the entry form, so the
+  // sheet reads the same way every month rather than by insertion order.
+  const ordered = Object.keys(groups).sort((a, b) => {
+    const ia = BILL_CATEGORY_ORDER.indexOf(a);
+    const ib = BILL_CATEGORY_ORDER.indexOf(b);
+    return (ia === -1 ? BILL_CATEGORY_ORDER.length : ia) - (ib === -1 ? BILL_CATEGORY_ORDER.length : ib);
   });
 
   const result = [];
 
-  for (const [cat, items] of Object.entries(groups)) {
+  for (const groupKey of ordered) {
+    const items = groups[groupKey];
     if (items.length === 0) continue;
 
     // Date range from earliest to latest
@@ -446,7 +463,9 @@ function groupExpensesByCategory(expenses: ExpenseItem[]): { dateRange: string; 
       dateRange,
       description: descriptionsPointWise,
       jobNo: jobNos,
-      category: cat,
+      // The row keeps its own category; the amount still lands in the F2
+      // column that category maps to.
+      category: mapToF2Category(groupKey),
       amount: totalAmount
     });
   }
