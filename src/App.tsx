@@ -150,6 +150,24 @@ export default function App() {
     };
   }, [expenses]);
 
+  /**
+   * When the current report was last sent, and what it looked like at the time.
+   *
+   * Without this the app cannot tell a sent report from an unsent draft, so
+   * starting a new one always warned that unsaved work was about to vanish —
+   * even right after the report had gone to accounts. The fingerprint is
+   * cleared implicitly: if the list has changed since, it no longer matches
+   * and the report counts as unsent again.
+   */
+  const [sentMark, setSentMark] = useState<{ at: string; fingerprint: string } | null>(() => {
+    try {
+      const raw = localStorage.getItem('aims_last_sent');
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  });
+
   // Modals state
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingExpense, setEditingExpense] = useState<ExpenseItem | null>(null);
@@ -163,6 +181,20 @@ export default function App() {
 
   const grandTotal = expenses.reduce((sum, item) => sum + item.amount, 0);
 
+  /** Identifies the exact report, so an edit after sending counts as unsent. */
+  const reportFingerprint = `${expenses.length}:${grandTotal.toFixed(2)}`;
+  const isAlreadySent = sentMark !== null && sentMark.fingerprint === reportFingerprint && expenses.length > 0;
+
+  const handleReportSent = () => {
+    const mark = { at: todayIso(), fingerprint: reportFingerprint };
+    setSentMark(mark);
+    try {
+      localStorage.setItem('aims_last_sent', JSON.stringify(mark));
+    } catch {
+      // Not worth interrupting the send over; the warning simply stays.
+    }
+  };
+
   const handleStartNewReport = () => {
     if (expenses.length === 0) {
       // Nothing would be lost, so do not interrupt with a dialog.
@@ -174,6 +206,12 @@ export default function App() {
 
   const resetReport = () => {
     setIsTitleManual(false);
+    setSentMark(null);
+    try {
+      localStorage.removeItem('aims_last_sent');
+    } catch {
+      // Nothing depends on the removal succeeding.
+    }
     setHeaderInfo({
       ...INITIAL_HEADER_INFO,
       dateSubmitted: todayIso(),
@@ -464,6 +502,7 @@ export default function App() {
         onClose={() => setIsOutlookModalOpen(false)}
         headerInfo={headerInfo}
         expenses={expenses}
+        onReportSent={handleReportSent}
       />
 
       <HistoryDrawer
@@ -490,13 +529,20 @@ export default function App() {
         onCancel={() => setExpensePendingDelete(null)}
       />
 
-      {/* Clear the whole form and start a new report */}
+      {/* Clear the whole form and start a new report. Once the report has gone
+          to accounts the warning says so, rather than implying unsent work is
+          about to be lost. */}
       <ConfirmDialog
         isOpen={isClearReportPending}
-        title="Delete this form and start fresh?"
-        message="Every expense row and attached bill in the current draft will be cleared. This cannot be undone."
+        title={isAlreadySent ? 'Start the next report?' : 'Delete this form and start fresh?'}
+        message={
+          isAlreadySent
+            ? `This report was sent on ${sentMark?.at}. Starting the next one clears its rows and bills from the app — the copy you emailed is unaffected.`
+            : 'Every expense row and attached bill in the current draft will be cleared. This cannot be undone.'
+        }
         detail={`${expenses.length} item${expenses.length === 1 ? '' : 's'} — SAR ${grandTotal.toFixed(2)}`}
-        confirmLabel="Delete Form"
+        confirmLabel={isAlreadySent ? 'Start New Report' : 'Delete Form'}
+        destructive={!isAlreadySent}
         onConfirm={() => {
           resetReport();
           setIsClearReportPending(false);

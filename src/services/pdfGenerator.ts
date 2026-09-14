@@ -79,7 +79,7 @@ export async function generateF2SummaryPdf(
   doc.setFont('helvetica', 'bold');
   doc.text('Date:', margin + 162, y + 3.8);
   doc.setFont('helvetica', 'normal');
-  doc.text(headerInfo.dateSubmitted || '11-Apr-26', margin + 185, y + 3.8);
+  doc.text(formatFormDate(headerInfo.dateSubmitted), margin + 185, y + 3.8);
 
   y += 5;
 
@@ -319,7 +319,10 @@ export async function generateF2SummaryPdf(
   const sigColW = (pageWidth - margin * 2) / 3; // ~92.3mm each
 
   // Box 1: Employee (Shoeb Ali Khan + Original Blue Shoeb Signature Overlay)
-  doc.rect(margin, y, sigColW, 14);
+  // 18mm rather than 14: the signature needs a row of its own, or the ink has
+  // to be squeezed over the Name and Date rows above it.
+  const sigBoxH = 18;
+  doc.rect(margin, y, sigColW, sigBoxH);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(8);
   doc.text('Name:', margin + 2, y + 4);
@@ -329,21 +332,16 @@ export async function generateF2SummaryPdf(
   doc.setFont('helvetica', 'bold');
   doc.text('Date:', margin + 2, y + 8);
   doc.setFont('helvetica', 'normal');
-  doc.text(headerInfo.dateSubmitted || '11-Apr-26', margin + 25, y + 8);
+  doc.text(formatFormDate(headerInfo.dateSubmitted), margin + 25, y + 8);
 
   doc.setFont('helvetica', 'bold');
   doc.text('Signature:', margin + 2, y + 12);
 
-  // Render Original Blue Shoeb Hand Signature Overlay
-  try {
-    doc.addImage(SHOEB_SIGNATURE_BASE64, 'PNG', margin + 22, y + 4.5, 26, 8.5);
-  } catch (e) {
-    console.error('Error rendering Shoeb signature:', e);
-  }
+  drawSignature(doc, SHOEB_SIGNATURE_BASE64, margin + 25, y + 9.5, 7);
 
   // Box 2: Approver (Leela Venkat + Original Blue Leela Signature Overlay)
   const appX = margin + sigColW;
-  doc.rect(appX, y, sigColW, 14);
+  doc.rect(appX, y, sigColW, sigBoxH);
   doc.setFont('helvetica', 'bold');
   doc.text("Approver's Name:", appX + 2, y + 4);
   doc.setFont('helvetica', 'normal');
@@ -352,21 +350,16 @@ export async function generateF2SummaryPdf(
   doc.setFont('helvetica', 'bold');
   doc.text('Date:', appX + 2, y + 8);
   doc.setFont('helvetica', 'normal');
-  doc.text(headerInfo.dateSubmitted || '11-Apr-26', appX + 32, y + 8);
+  doc.text(formatFormDate(headerInfo.dateSubmitted), appX + 32, y + 8);
 
   doc.setFont('helvetica', 'bold');
   doc.text('Signature:', appX + 2, y + 12);
 
-  // Render Original Blue Leela Hand Signature Overlay
-  try {
-    doc.addImage(LEELA_SIGNATURE_BASE64, 'PNG', appX + 30, y + 4.5, 26, 8.5);
-  } catch (e) {
-    console.error('Error rendering Leela signature:', e);
-  }
+  drawSignature(doc, LEELA_SIGNATURE_BASE64, appX + 32, y + 9.5, 7);
 
   // Box 3: Cost Controller
   const ccX = appX + sigColW;
-  doc.rect(ccX, y, sigColW, 14);
+  doc.rect(ccX, y, sigColW, sigBoxH);
   doc.setFont('helvetica', 'bold');
   doc.text('Cost Controller:', ccX + 2, y + 4);
 
@@ -383,6 +376,37 @@ export async function generateF2SummaryPdf(
     fileName,
     base64
   };
+}
+
+/**
+ * "14-Sep-26", as the submitted sheets print it, rather than the raw ISO date
+ * the form used to show once the pasted signature block stopped covering it.
+ */
+function formatFormDate(dateStr?: string): string {
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const parts = (dateStr || '').split('-');
+  if (parts.length === 3) {
+    const name = months[parseInt(parts[1], 10) - 1];
+    if (name) return `${parseInt(parts[2], 10)}-${name}-${parts[0].slice(-2)}`;
+  }
+  return dateStr || '';
+}
+
+/**
+ * Draws a signature at the given height, keeping its proportions.
+ *
+ * The stored images are cropped to the ink alone, so their shapes differ; a
+ * fixed width and height stretched them. `x` and `y` are the top-left of the
+ * mark, which sits on the Signature row and nothing above it.
+ */
+function drawSignature(doc: jsPDF, image: string, x: number, y: number, height: number): void {
+  try {
+    const props = doc.getImageProperties(image);
+    const width = props.height > 0 ? (props.width / props.height) * height : height * 2;
+    doc.addImage(image, 'PNG', x, y, width, height);
+  } catch (e) {
+    console.error('Error rendering signature:', e);
+  }
 }
 
 /**
