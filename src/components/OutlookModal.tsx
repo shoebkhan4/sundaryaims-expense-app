@@ -18,13 +18,17 @@ interface OutlookModalProps {
   onClose: () => void;
   headerInfo: CompanyHeaderInfo;
   expenses: ExpenseItem[];
+  /** Called once the report has actually gone out, so the app stops treating
+   *  it as an unsent draft when the next report is started. */
+  onReportSent?: () => void;
 }
 
 export const OutlookModal: React.FC<OutlookModalProps> = ({
   isOpen,
   onClose,
   headerInfo,
-  expenses
+  expenses,
+  onReportSent
 }) => {
   const [toInput, setToInput] = useState(DEFAULT_RECIPIENTS.to.join(', '));
   const [ccInput, setCcInput] = useState(DEFAULT_RECIPIENTS.cc.join(', '));
@@ -157,6 +161,7 @@ export const OutlookModal: React.FC<OutlookModalProps> = ({
 
       setSentFrom(address);
       setSendSuccess(true);
+      onReportSent?.();
     } catch (err) {
       console.error('Could not send the report:', err);
       setErrorMessage(
@@ -187,6 +192,8 @@ export const OutlookModal: React.FC<OutlookModalProps> = ({
           'This browser cannot pass files to another app, so both PDFs have been saved instead. Attach them to the mail yourself.'
         );
       } else if (outcome === 'shared') {
+        // Handed to a mail app with both PDFs, which is as far as this can see.
+        onReportSent?.();
         setNoticeMessage(
           'Both PDFs went across. A share cannot carry addresses, so Outlook opens with To and CC empty — use the Copy buttons above and paste them in. The subject is the first line of the message; delete that line once Outlook has picked it up.'
         );

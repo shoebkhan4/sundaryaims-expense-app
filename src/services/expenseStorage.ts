@@ -18,6 +18,18 @@ const DB_NAME = 'aims-receipts';
 const STORE_NAME = 'images';
 const DB_VERSION = 1;
 
+/**
+ * Images belonging to a saved report rather than the current draft.
+ *
+ * They live in the same store, so both the orphan sweep and the clear-report
+ * path must leave them alone — otherwise starting the next report would take
+ * the bills of every report already filed with it.
+ */
+export const ARCHIVE_KEY_PREFIX = 'archive:';
+
+const isArchiveKey = (key: unknown): boolean =>
+  typeof key === 'string' && key.startsWith(ARCHIVE_KEY_PREFIX);
+
 /** What actually goes into localStorage: everything except the image itself. */
 type StoredExpense = Omit<ExpenseItem, 'receiptImage'> & { hasImage?: boolean };
 
@@ -174,11 +186,12 @@ export async function persistExpenses(expenses: ExpenseItem[]): Promise<PersistR
       })
     );
 
-    // Drop images belonging to deleted rows.
+    // Drop images belonging to deleted rows, but never one kept for a saved
+    // report: those keys belong to no live row by design.
     const keys = (await withStore<IDBValidKey[]>('readonly', (store) => store.getAllKeys() as IDBRequest<IDBValidKey[]>)) || [];
     await Promise.all(
       keys
-        .filter((key) => typeof key === 'string' && !liveIds.has(key))
+        .filter((key) => typeof key === 'string' && !liveIds.has(key) && !isArchiveKey(key))
         .map(async (key) => {
           await withStore('readwrite', (store) => store.delete(key) as IDBRequest<undefined>);
           writtenImages.delete(String(key));
@@ -206,7 +219,7 @@ export async function persistExpenses(expenses: ExpenseItem[]): Promise<PersistR
   return result;
 }
 
-/** Forgets the whole report, images included. */
+/** Forgets the current report, images included. Saved reports are untouched. */
 export async function clearStoredExpenses(): Promise<void> {
   try {
     localStorage.removeItem(EXPENSES_KEY);
@@ -214,5 +227,38 @@ export async function clearStoredExpenses(): Promise<void> {
     // Nothing further to do; the list is gone from memory either way.
   }
   writtenImages.clear();
-  await withStore('readwrite', (store) => store.clear() as IDBRequest<undefined>);
+
+  // Deliberately not store.clear(): that took the saved reports' bills too.
+  const keys = (await withStore<IDBValidKey[]>('readonly', (store) => store.getAllKeys() as IDBRequest<IDBValidKey[]>)) || [];
+  await Promise.all(
+    keys
+      .filter((key) => !isArchiveKey(key))
+      .map((key) => withStore('readwrite', (store) => store.delete(key) as IDBRequest<undefined>))
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * Image access for saved reports
+ * ------------------------------------------------------------------ */
+
+export async function putArchivedImage(key: string, image: string): Promise<boolean> {
+  const saved = await withStore('readwrite', (store) => store.put(image, key) as IDBRequest<IDBValidKey>);
+  return saved !== null;
+}
+
+export async function getArchivedImages(keys: string[]): Promise<Map<string, string>> {
+  const found = new Map<string, string>();
+  await Promise.all(
+    keys.map(async (key) => {
+      const value = await withStore<string>('readonly', (store) => store.get(key) as IDBRequest<string>);
+      if (typeof value === 'string' && value.length > 0) found.set(key, value);
+    })
+  );
+  return found;
+}
+
+export async function deleteArchivedImages(keys: string[]): Promise<void> {
+  await Promise.all(
+    keys.map((key) => withStore('readwrite', (store) => store.delete(key) as IDBRequest<undefined>))
+  );
 }

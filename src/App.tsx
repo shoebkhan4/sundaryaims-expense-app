@@ -9,6 +9,7 @@ import { OutlookModal } from './components/OutlookModal';
 import { HistoryDrawer } from './components/HistoryDrawer';
 import { ConfirmDialog } from './components/ConfirmDialog';
 import { clearStoredExpenses, loadExpenses, loadReceiptImages, persistExpenses } from './services/expenseStorage';
+import { ArchivedReport, archiveReport, deleteArchivedReport, loadArchivedReports } from './services/reportArchive';
 import { Send, FileText, Sparkles, Building2, UserCheck, Calendar, Edit3, RotateCcw, Layers } from 'lucide-react';
 import { AIMS_LOGO_BASE64 } from './assets/images';
 
@@ -150,6 +151,24 @@ export default function App() {
     };
   }, [expenses]);
 
+  /**
+   * When the current report was last sent, and what it looked like at the time.
+   *
+   * Without this the app cannot tell a sent report from an unsent draft, so
+   * starting a new one always warned that unsaved work was about to vanish —
+   * even right after the report had gone to accounts. The fingerprint is
+   * cleared implicitly: if the list has changed since, it no longer matches
+   * and the report counts as unsent again.
+   */
+  const [sentMark, setSentMark] = useState<{ at: string; fingerprint: string } | null>(() => {
+    try {
+      const raw = localStorage.getItem('aims_last_sent');
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  });
+
   // Modals state
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [editingExpense, setEditingExpense] = useState<ExpenseItem | null>(null);
@@ -161,7 +180,26 @@ export default function App() {
   const [expensePendingDelete, setExpensePendingDelete] = useState<ExpenseItem | null>(null);
   const [isClearReportPending, setIsClearReportPending] = useState(false);
 
+  /** Reports already filed, newest first. */
+  const [archived, setArchived] = useState<ArchivedReport[]>(() => loadArchivedReports());
+  const [isArchiving, setIsArchiving] = useState(false);
+  const [archiveNotice, setArchiveNotice] = useState<string | null>(null);
+
   const grandTotal = expenses.reduce((sum, item) => sum + item.amount, 0);
+
+  /** Identifies the exact report, so an edit after sending counts as unsent. */
+  const reportFingerprint = `${expenses.length}:${grandTotal.toFixed(2)}`;
+  const isAlreadySent = sentMark !== null && sentMark.fingerprint === reportFingerprint && expenses.length > 0;
+
+  const handleReportSent = () => {
+    const mark = { at: todayIso(), fingerprint: reportFingerprint };
+    setSentMark(mark);
+    try {
+      localStorage.setItem('aims_last_sent', JSON.stringify(mark));
+    } catch {
+      // Not worth interrupting the send over; the warning simply stays.
+    }
+  };
 
   const handleStartNewReport = () => {
     if (expenses.length === 0) {
@@ -174,6 +212,12 @@ export default function App() {
 
   const resetReport = () => {
     setIsTitleManual(false);
+    setSentMark(null);
+    try {
+      localStorage.removeItem('aims_last_sent');
+    } catch {
+      // Nothing depends on the removal succeeding.
+    }
     setHeaderInfo({
       ...INITIAL_HEADER_INFO,
       dateSubmitted: todayIso(),
@@ -181,6 +225,33 @@ export default function App() {
     });
     setExpenses([]);
     void clearStoredExpenses();
+  };
+
+  /**
+   * Files the current report to History, then starts the next one. The bills
+   * are copied into the archive before the draft is cleared, so nothing that
+   * was sent is lost when the next report begins.
+   */
+  const handleSaveToHistoryAndReset = async () => {
+    setIsArchiving(true);
+    setArchiveNotice(null);
+    try {
+      const result = await archiveReport(headerInfo, expenses);
+      if (!result.ok) {
+        setArchiveNotice('The report could not be saved to History, so it has been left as it is.');
+        return;
+      }
+      setArchived(loadArchivedReports());
+      setArchiveNotice(
+        result.imagesFailed > 0
+          ? `Report saved to History, but ${result.imagesFailed} bill image could not be stored.`
+          : 'Report saved to History.'
+      );
+      resetReport();
+      setIsClearReportPending(false);
+    } finally {
+      setIsArchiving(false);
+    }
   };
 
   const handleSaveExpense = (newExpenseData: Omit<ExpenseItem, 'id'>) => {
@@ -226,6 +297,26 @@ export default function App() {
         <div className="bg-rose-600/90 text-white text-xs font-semibold px-4 py-2 text-center">
           This device is out of storage space, so recent changes are not being saved.
           Send or download this report, then start a new one to free space.
+        </div>
+      )}
+
+      {/* Confirmation that a report was filed, or that filing it failed. */}
+      {archiveNotice && (
+        <div
+          className={`text-xs font-semibold px-4 py-2 text-center flex items-center justify-center gap-3 ${
+            archiveNotice.startsWith('Report saved')
+              ? 'bg-emerald-600/90 text-white'
+              : 'bg-amber-600/90 text-white'
+          }`}
+        >
+          <span>{archiveNotice}</span>
+          <button
+            type="button"
+            onClick={() => setArchiveNotice(null)}
+            className="underline underline-offset-2 hover:no-underline"
+          >
+            Dismiss
+          </button>
         </div>
       )}
 
@@ -464,11 +555,16 @@ export default function App() {
         onClose={() => setIsOutlookModalOpen(false)}
         headerInfo={headerInfo}
         expenses={expenses}
+        onReportSent={handleReportSent}
       />
 
       <HistoryDrawer
         isOpen={isHistoryDrawerOpen}
         onClose={() => setIsHistoryDrawerOpen(false)}
+        archived={archived}
+        onDeleteArchived={(id) => {
+          void deleteArchivedReport(id).then(() => setArchived(loadArchivedReports()));
+        }}
         onLoadPastReport={(header, items) => {
           setHeaderInfo(header);
           setExpenses(items);
@@ -490,13 +586,22 @@ export default function App() {
         onCancel={() => setExpensePendingDelete(null)}
       />
 
-      {/* Clear the whole form and start a new report */}
+      {/* Starting the next report: keep this one in History, or discard it.
+          Sending happens through the share sheet, so the app cannot assume the
+          report is safe elsewhere — it offers to file it either way. */}
       <ConfirmDialog
         isOpen={isClearReportPending}
-        title="Delete this form and start fresh?"
-        message="Every expense row and attached bill in the current draft will be cleared. This cannot be undone."
+        title={isAlreadySent ? 'Start the next report?' : 'Start a new report?'}
+        message={
+          isAlreadySent
+            ? `This report was sent on ${sentMark?.at}. Save it to History to keep its rows and bills in the app, or delete it — either way the copy you emailed is unaffected.`
+            : 'Save this report to History to keep its rows and bills, or delete it. Deleting cannot be undone.'
+        }
         detail={`${expenses.length} item${expenses.length === 1 ? '' : 's'} — SAR ${grandTotal.toFixed(2)}`}
-        confirmLabel="Delete Form"
+        secondaryLabel={isArchiving ? 'Saving…' : 'Save to History & Start New'}
+        onSecondary={handleSaveToHistoryAndReset}
+        confirmLabel="Delete Without Saving"
+        busy={isArchiving}
         onConfirm={() => {
           resetReport();
           setIsClearReportPending(false);

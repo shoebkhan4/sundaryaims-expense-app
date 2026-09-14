@@ -9,6 +9,15 @@ interface ConfirmDialogProps {
   detail?: string;
   confirmLabel?: string;
   cancelLabel?: string;
+  /**
+   * A second course of action alongside the confirm, for choices that are not
+   * simply yes or no — keeping the current report versus discarding it. When
+   * given, this is the safe choice and takes the prominent button.
+   */
+  secondaryLabel?: string;
+  onSecondary?: () => void;
+  /** Disables both actions while one is still running. */
+  busy?: boolean;
   /** Red styling and a bin icon for destructive actions. */
   destructive?: boolean;
   onConfirm: () => void;
@@ -22,6 +31,9 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
   detail,
   confirmLabel = 'Confirm',
   cancelLabel = 'Cancel',
+  secondaryLabel,
+  onSecondary,
+  busy = false,
   destructive = true,
   onConfirm,
   onCancel
@@ -86,27 +98,61 @@ export const ConfirmDialog: React.FC<ConfirmDialogProps> = ({
           </button>
         </div>
 
-        <div className="px-5 pb-5 flex items-center gap-3">
-          <button
-            ref={cancelRef}
-            type="button"
-            onClick={onCancel}
-            className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-sm font-semibold transition"
-          >
-            {cancelLabel}
-          </button>
-          <button
-            type="button"
-            onClick={onConfirm}
-            className={`flex-1 py-2.5 rounded-xl text-white text-sm font-extrabold shadow-lg transition ${
-              destructive
-                ? 'bg-rose-600 hover:bg-rose-500 shadow-rose-600/25'
-                : 'bg-cyan-600 hover:bg-cyan-500 shadow-cyan-600/25'
-            }`}
-          >
-            {confirmLabel}
-          </button>
-        </div>
+        {secondaryLabel && onSecondary ? (
+          /* Three ways out, so they stack: keeping the report is the safe one
+             and leads, discarding it stays plainly labelled below. */
+          <div className="px-5 pb-5 space-y-2">
+            <button
+              ref={cancelRef}
+              type="button"
+              onClick={onSecondary}
+              disabled={busy}
+              className="w-full py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-extrabold shadow-lg shadow-cyan-600/25 transition disabled:opacity-50"
+            >
+              {secondaryLabel}
+            </button>
+            <button
+              type="button"
+              onClick={onConfirm}
+              disabled={busy}
+              className="w-full py-2.5 rounded-xl bg-rose-600/90 hover:bg-rose-500 text-white text-sm font-bold transition disabled:opacity-50"
+            >
+              {confirmLabel}
+            </button>
+            <button
+              type="button"
+              onClick={onCancel}
+              disabled={busy}
+              className="w-full py-2 rounded-xl bg-transparent hover:bg-slate-800 text-slate-400 hover:text-slate-200 text-xs font-semibold transition disabled:opacity-50"
+            >
+              {cancelLabel}
+            </button>
+          </div>
+        ) : (
+          <div className="px-5 pb-5 flex items-center gap-3">
+            <button
+              ref={cancelRef}
+              type="button"
+              onClick={onCancel}
+              disabled={busy}
+              className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-sm font-semibold transition disabled:opacity-50"
+            >
+              {cancelLabel}
+            </button>
+            <button
+              type="button"
+              onClick={onConfirm}
+              disabled={busy}
+              className={`flex-1 py-2.5 rounded-xl text-white text-sm font-extrabold shadow-lg transition disabled:opacity-50 ${
+                destructive
+                  ? 'bg-rose-600 hover:bg-rose-500 shadow-rose-600/25'
+                  : 'bg-cyan-600 hover:bg-cyan-500 shadow-cyan-600/25'
+              }`}
+            >
+              {confirmLabel}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
