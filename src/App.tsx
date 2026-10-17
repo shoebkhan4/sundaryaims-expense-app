@@ -12,7 +12,6 @@ import { clearStoredExpenses, loadExpenses, loadReceiptImages, persistExpenses }
 import { ArchivedReport, archiveReport, deleteArchivedReport, loadArchivedReports } from './services/reportArchive';
 import { Send, FileText, Sparkles, Building2, UserCheck, Calendar, Edit3, RotateCcw, Layers } from 'lucide-react';
 import { AIMS_LOGO_BASE64 } from './assets/images';
-import { downloadTransferFile } from './services/reportTransfer';
 
 /** Today, in the local timezone, as YYYY-MM-DD. */
 function todayIso(): string {
@@ -338,12 +337,6 @@ export default function App() {
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
-
-        {/* Temporary: move this report to the new AIMS Expense Portal (see reportTransfer.ts). */}
-        <TransferBanner
-          count={expenses.length}
-          onExport={() => downloadTransferFile(headerInfo, expenses, isTitleManual)}
-        />
         
         {/* AIMS BRANDED TOP SUMMARY BANNER CARD */}
         <div className="bg-slate-900 border border-cyan-500/30 rounded-2xl p-6 shadow-2xl relative overflow-hidden">
@@ -616,41 +609,6 @@ export default function App() {
         onCancel={() => setIsClearReportPending(false)}
       />
 
-    </div>
-  );
-}
-
-/** Temporary: saves the current report for "Import a report" in the AIMS Expense Portal. */
-function TransferBanner({ count, onExport }: { count: number; onExport: () => Promise<string> }) {
-  const [state, setState] = useState<{ busy: boolean; message: string | null }>({ busy: false, message: null });
-  const run = async () => {
-    setState({ busy: true, message: null });
-    try {
-      const name = await onExport();
-      setState({
-        busy: false,
-        message: `Saved "${name}". Open https://expenses.aimsserver.com → My reports → Saved on this device → Import a report, and choose this file.`
-      });
-    } catch (e) {
-      setState({ busy: false, message: `Could not save the file: ${e instanceof Error ? e.message : String(e)}` });
-    }
-  };
-  return (
-    <div className="bg-cyan-500/10 border border-cyan-500/40 rounded-2xl p-4 text-sm text-cyan-100 space-y-2">
-      <p className="font-bold">Moving to the new AIMS Expense Portal</p>
-      <p className="text-xs text-cyan-100/80">
-        Save this report ({count} item{count === 1 ? '' : 's'}, with its bills) as a file, then import it in the new app. To move a
-        report from History, open it first.
-      </p>
-      <button
-        type="button"
-        onClick={() => void run()}
-        disabled={state.busy || count === 0}
-        className="min-h-11 px-4 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-bold disabled:opacity-50"
-      >
-        {state.busy ? 'Saving…' : 'Export this report'}
-      </button>
-      {state.message && <p className="text-xs break-words">{state.message}</p>}
     </div>
   );
 }
